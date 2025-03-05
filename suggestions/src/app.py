@@ -1,5 +1,6 @@
 import sys
 import os
+from random import randrange
 
 # This set of lines are needed to import the gRPC stubs.
 # The path of the stubs is relative to the current file, or absolute inside the container.
@@ -17,16 +18,33 @@ from concurrent import futures
 class SuggestionsService(suggestions_grpc.SuggestionsServiceServicer):
     def GetSuggestions(self, request, context):
         response = suggestions.SuggestionResponse()
-        # Set the greeting field of the response object
-        response.message = f"Suggetions completed for {request.name}"
-        print(response.message)
+        # Use name to suggest book with AI
+        book_name = request.book_name
+
+        suggested_books = [{'bookId': '123', 'title': 'The Best Book', 'author': 'Author'},
+                           {'bookId': '124', 'title': 'Harry Potter', 'author': 'JK Rowling'},
+                           {'bookId': '125', 'title': 'Lord of the Rings', 'author': 'Author 1'},
+                           {'bookId': '126', 'title': 'Dune', 'author': 'Author 2'},
+                           {'bookId': '127', 'title': 'Sherlock Holmes', 'author': 'Author 3'},
+                           {'bookId': '128', 'title': 'Hello World', 'author': 'Author 4'},
+                           {'bookId': '129', 'title': 'I dislike distributed systems', 'author': 'Author 5'}]
+        
+        indices = [randrange(7) for i in range(3)]
+        for indice in indices:
+            sb = suggestions.SuggestedBook()
+            sb.bookId = suggested_books[indice]['bookId']
+            sb.title = suggested_books[indice]['title']
+            sb.author = suggested_books[indice]['author']
+            response.suggested_books.append(sb)
+
+        # Always True by default
+        response.approved = True
         # Return the response object
         return response
 
 def serve():
     # Create a gRPC server
     server = grpc.server(futures.ThreadPoolExecutor())
-    # Add HelloService
     suggestions_grpc.add_SuggestionsServiceServicer_to_server(SuggestionsService(), server)
     # Listen on port 50053
     port = "50053"

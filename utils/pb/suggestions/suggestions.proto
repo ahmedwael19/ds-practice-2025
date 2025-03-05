@@ -6,10 +6,17 @@ service SuggestionsService {
     rpc GetSuggestions (SuggestionRequest) returns (SuggestionResponse);
 }
 
+message SuggestedBook {
+    string bookId = 1;
+    string title = 2;
+    string author = 3;
+}
+
 message SuggestionRequest {
-    string name = 1;
+    string book_name = 1;
 }
 
 message SuggestionResponse {
-    string message = 1;
+    repeated SuggestedBook suggested_books = 1;
+    bool approved = 2;
 }

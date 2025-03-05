@@ -6,10 +6,22 @@ service FraudService {
     rpc DetectFraud (FraudRequest) returns (FraudResponse);
 }
 
-message FraudRequest {
+message UserInfo {
     string name = 1;
+    string contact = 2;
+}
+
+message CreditCardInfo {
+    string number = 1;
+    string expirationDate = 2;
+    string cvv = 3;
+}
+
+message FraudRequest {
+    UserInfo user_info = 1;
+    CreditCardInfo credit_card = 2;
 }
 
 message FraudResponse {
-    string message = 1;
+    bool approved = 1;
 }

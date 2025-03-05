@@ -2,14 +2,25 @@ syntax = "proto3";
 
 package transaction;
 
+message Item {
+    string name = 1;
+    int32 quantity = 2;
+}
+
+message creditCardInfo {
+    string number = 1;
+    string expirationDate = 2;
+    string cvv = 3;
+}
 service TransactionService {
     rpc VerifyTransaction (TransactionRequest) returns (TransactionResponse);
 }
 
 message TransactionRequest {
-    string name = 1;
+    repeated Item items = 1;
+    creditCardInfo credit_card = 2;
 }
 
 message TransactionResponse {
-    string message = 1;
+    bool approved = 1;
 }

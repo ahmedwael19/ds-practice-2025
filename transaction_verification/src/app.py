@@ -17,18 +17,18 @@ from concurrent import futures
 # transaction_verification_grpc.HelloServiceServicer
 class TransactionService(transaction_verification_grpc.TransactionServiceServicer):
     def VerifyTransaction(self, request, context):
-        # Create a HelloResponse object
         response = transaction_verification.TransactionResponse()
-        response.message = f"Verifying transaction completed for {request.name}"
-        # Print the greeting message
-        print(response.message)
+        response.approved = True
+        if request.items is not None and len(request.credit_card.number) != 16:
+            print("Transaction Invalid")
+            response.approved = False
         # Return the response object
         return response
 
 def serve():
     # Create a gRPC server
     server = grpc.server(futures.ThreadPoolExecutor())
-    # Add HelloService
+    # Add Transaction Verification Service
     transaction_verification_grpc.add_TransactionServiceServicer_to_server(TransactionService(), server)
     # Listen on port 50052
     port = "50052"

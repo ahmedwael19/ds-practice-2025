@@ -17,12 +17,11 @@ from concurrent import futures
 # fraud_detection_pb2_grpc.HelloServiceServicer
 class FraudService(fraud_detection_grpc.FraudServiceServicer):
     def DetectFraud(self, request, context):
+        print(request.credit_card)
+        print(request.user_info)
         # Create a DetectFraud object
         response = fraud_detection.FraudResponse()
-        # Set the greeting field of the response object
-        response.message = f"Fraud check completed for {request.name}"
-        # Print the greeting message
-        print(response.message)
+        response.approved = True
         return response
 
 def serve():
