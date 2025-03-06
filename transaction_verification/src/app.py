@@ -1,42 +1,40 @@
 import sys
 import os
+import grpc
+import logging
+from concurrent import futures
 
-# This set of lines are needed to import the gRPC stubs.
-# The path of the stubs is relative to the current file, or absolute inside the container.
-# Change these lines only if strictly needed.
 FILE = __file__ if '__file__' in globals() else os.getenv("PYTHONFILE", "")
 transaction_verification_grpc_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/transaction_verification'))
 sys.path.insert(0, transaction_verification_grpc_path)
-import transaction_verification_pb2 as transaction_verification
-import transaction_verification_pb2_grpc as transaction_verification_grpc
+import transaction_verification_pb2, transaction_verification_pb2_grpc
 
-import grpc
-from concurrent import futures
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("transaction_verification")
 
-# Create a class to define the server functions, derived from
-# transaction_verification_grpc.HelloServiceServicer
-class TransactionService(transaction_verification_grpc.TransactionServiceServicer):
+class TransactionService(transaction_verification_pb2_grpc.TransactionServiceServicer):
     def VerifyTransaction(self, request, context):
-        response = transaction_verification.TransactionResponse()
+        cid = "N/A"
+        for key, value in context.invocation_metadata():
+            if key == "correlation-id":
+                cid = value
+                break
+        logger.info(f"[{cid}] Received VerifyTransaction request")
+        response = transaction_verification_pb2.TransactionResponse()
         response.approved = True
-        if request.items is not None and len(request.credit_card.number) != 16:
-            print("Transaction Invalid")
+        if request.items and len(request.credit_card.number) != 16:
+            logger.info(f"[{cid}] Transaction invalid due to credit card number length")
             response.approved = False
-        # Return the response object
+        logger.info(f"[{cid}] VerifyTransaction completed with approved={response.approved}")
         return response
 
 def serve():
-    # Create a gRPC server
-    server = grpc.server(futures.ThreadPoolExecutor())
-    # Add Transaction Verification Service
-    transaction_verification_grpc.add_TransactionServiceServicer_to_server(TransactionService(), server)
-    # Listen on port 50052
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    transaction_verification_pb2_grpc.add_TransactionServiceServicer_to_server(TransactionService(), server)
     port = "50052"
     server.add_insecure_port("[::]:" + port)
-    # Start the server
+    logger.info(f"Transaction Verification Service started on port {port}")
     server.start()
-    print("Server started. Listening on port 50052.")
-    # Keep thread alive
     server.wait_for_termination()
 
 if __name__ == '__main__':

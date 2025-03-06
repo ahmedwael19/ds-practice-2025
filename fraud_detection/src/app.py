@@ -1,41 +1,51 @@
 import sys
 import os
+import grpc
+import logging
+from concurrent import futures
 
-# This set of lines are needed to import the gRPC stubs.
-# The path of the stubs is relative to the current file, or absolute inside the container.
-# Change these lines only if strictly needed.
 FILE = __file__ if '__file__' in globals() else os.getenv("PYTHONFILE", "")
 fraud_detection_grpc_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/fraud_detection'))
 sys.path.insert(0, fraud_detection_grpc_path)
-import fraud_detection_pb2 as fraud_detection
-import fraud_detection_pb2_grpc as fraud_detection_grpc
+import fraud_detection_pb2, fraud_detection_pb2_grpc
 
-import grpc
-from concurrent import futures
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("fraud_detection")
 
-# Create a class to define the server functions, derived from
-# fraud_detection_pb2_grpc.HelloServiceServicer
-class FraudService(fraud_detection_grpc.FraudServiceServicer):
+class FraudService(fraud_detection_pb2_grpc.FraudServiceServicer):
     def DetectFraud(self, request, context):
-        print(request.credit_card)
-        print(request.user_info)
-        # Create a DetectFraud object
-        response = fraud_detection.FraudResponse()
-        response.approved = True
-        return response
+        cid = "N/A"
+        for key, value in context.invocation_metadata():
+            if key == "correlation-id":
+                cid = value
+                break
+        logger.info(f"[{cid}] Received DetectFraud request for user: {request.user_info.name}")
+        response = fraud_detection_pb2.FraudResponse()
+        try:
+            if not request.credit_card.number:
+                msg = "Missing credit card number"
+                logger.error(f"[{cid}] {msg}")
+                context.set_code(grpc.StatusCode.INVALID_ARGUMENT)
+                context.set_details(msg)
+                response.approved = False
+                return response
+            response.approved = True
+            logger.info(f"[{cid}] Fraud detection approved for user: {request.user_info.name}")
+            return response
+        except Exception as e:
+            logger.exception(f"[{cid}] Exception in DetectFraud: {str(e)}")
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details("Internal error")
+            response.approved = False
+            return response
 
 def serve():
-    # Create a gRPC server
-    server = grpc.server(futures.ThreadPoolExecutor())
-    # Add HelloService
-    fraud_detection_grpc.add_FraudServiceServicer_to_server(FraudService(), server)
-    # Listen on port 50051
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    fraud_detection_pb2_grpc.add_FraudServiceServicer_to_server(FraudService(), server)
     port = "50051"
     server.add_insecure_port("[::]:" + port)
-    # Start the server
+    logger.info(f"Fraud Detection Service started on port {port}")
     server.start()
-    print("Fraud Detection Server started Listening on port 50051.")
-    # Keep thread alive
     server.wait_for_termination()
 
 if __name__ == '__main__':
