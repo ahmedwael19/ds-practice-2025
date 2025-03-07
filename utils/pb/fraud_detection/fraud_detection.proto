@@ -1,27 +1,62 @@
-syntax = "proto3";
+syntax = "proto3";  // Specifies that we are using Protocol Buffers version 3.
 
-package fraud;
+package fraud;  // Defines the package name to avoid conflicts when importing the generated code.
 
+/*
+  FraudService is responsible for evaluating whether a transaction is fraudulent.
+
+  The service consists of a single RPC method:
+  - DetectFraud: Takes a FraudRequest containing user and credit card details and returns a FraudResponse 
+    indicating whether the transaction is approved or flagged as fraudulent.
+*/
 service FraudService {
     rpc DetectFraud (FraudRequest) returns (FraudResponse);
 }
 
+/*
+  UserInfo stores basic user details associated with the transaction.
+
+  Fields:
+  - name: The name of the user making the transaction.
+  - contact: The user's contact details (e.g., email or phone number).
+*/
 message UserInfo {
     string name = 1;
     string contact = 2;
 }
 
+/*
+  CreditCardInfo contains details about the payment method.
+
+  Fields:
+  - number: The credit card number used for the transaction.
+  - expirationDate: The expiration date of the credit card in MM/YY or MM/YYYY format.
+  - cvv: The card verification value (CVV), a security code usually found on the back of the card.
+*/
 message CreditCardInfo {
     string number = 1;
     string expirationDate = 2;
     string cvv = 3;
 }
 
+/*
+  FraudRequest is the input message for the DetectFraud RPC.
+
+  It contains:
+  - user_info: User details (name and contact information).
+  - credit_card: Credit card details used in the transaction.
+*/
 message FraudRequest {
     UserInfo user_info = 1;
     CreditCardInfo credit_card = 2;
 }
 
+/*
+  FraudResponse is the output message returned by DetectFraud.
+
+  Fields:
+  - approved: A boolean flag indicating whether the transaction is legitimate (true) or fraudulent (false).
+*/
 message FraudResponse {
     bool approved = 1;
 }

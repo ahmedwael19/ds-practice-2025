@@ -1,26 +1,62 @@
-syntax = "proto3";
+syntax = "proto3";  // Specifies that we are using Protocol Buffers version 3.
 
-package transaction;
+package transaction;  // Defines the package name to avoid conflicts when importing the generated code.
 
+/*
+  Item represents a product in a transaction.
+
+  Fields:
+  - name: The name of the item being purchased.
+  - quantity: The number of units of the item in the order.
+*/
 message Item {
     string name = 1;
     int32 quantity = 2;
 }
 
-message creditCardInfo {
+/*
+  CreditCardInfo contains details about the payment method.
+
+  Fields:
+  - number: The credit card number used for the transaction.
+  - expirationDate: The expiration date of the credit card in MM/YY or MM/YYYY format.
+  - cvv: The card verification value (CVV), a security code usually found on the back of the card.
+*/
+message CreditCardInfo {
     string number = 1;
     string expirationDate = 2;
     string cvv = 3;
 }
+
+/*
+  TransactionService handles transaction validation.
+
+  The service consists of a single RPC method:
+  - VerifyTransaction: Takes a TransactionRequest containing items and credit card details 
+    and returns a TransactionResponse indicating whether the transaction is approved.
+*/
 service TransactionService {
     rpc VerifyTransaction (TransactionRequest) returns (TransactionResponse);
 }
 
+/*
+  TransactionRequest is the input message for the VerifyTransaction RPC.
+
+  Fields:
+  - items: A list of purchased items.
+  - credit_card: Credit card details used for the transaction.
+*/
 message TransactionRequest {
     repeated Item items = 1;
-    creditCardInfo credit_card = 2;
+    CreditCardInfo credit_card = 2;
 }
 
+/*
+  TransactionResponse is the output message returned by VerifyTransaction.
+
+  Fields:
+  - approved: A boolean flag indicating whether the transaction is legitimate (true) or declined (false).
+*/
 message TransactionResponse {
     bool approved = 1;
 }

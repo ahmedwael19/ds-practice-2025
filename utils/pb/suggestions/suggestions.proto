@@ -1,21 +1,49 @@
-syntax = "proto3";
+syntax = "proto3";  // Specifies that we are using Protocol Buffers version 3.
 
-package suggestions;
+package suggestions;  // Defines the package name to avoid conflicts when importing the generated code.
 
+/*
+  SuggestionsService provides book recommendations based on the provided book name.
+
+  The service consists of a single RPC method:
+  - GetSuggestions: Takes a SuggestionRequest containing a book name and returns a SuggestionResponse
+    with a list of suggested books.
+*/
 service SuggestionsService {
     rpc GetSuggestions (SuggestionRequest) returns (SuggestionResponse);
 }
 
+/*
+  SuggestedBook represents a recommended book.
+
+  Fields:
+  - bookId: A unique identifier for the book.
+  - title: The title of the book.
+  - author: The author's name.
+*/
 message SuggestedBook {
     string bookId = 1;
     string title = 2;
     string author = 3;
 }
 
+/*
+  SuggestionRequest is the input message for the GetSuggestions RPC.
+
+  Fields:
+  - book_name: The name of the book used as a reference for generating recommendations.
+*/
 message SuggestionRequest {
     string book_name = 1;
 }
 
+/*
+  SuggestionResponse is the output message returned by GetSuggestions.
+
+  Fields:
+  - suggested_books: A list of recommended books based on the provided book name.
+  - approved: A boolean flag indicating whether the request was successfully processed.
+*/
 message SuggestionResponse {
     repeated SuggestedBook suggested_books = 1;
     bool approved = 2;

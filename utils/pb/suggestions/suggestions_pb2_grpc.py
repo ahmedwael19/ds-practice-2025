@@ -6,7 +6,13 @@ import suggestions_pb2 as suggestions__pb2
 
 
 class SuggestionsServiceStub(object):
-    """Missing associated documentation comment in .proto file."""
+    """
+    SuggestionsService provides book recommendations based on the provided book name.
+
+    The service consists of a single RPC method:
+    - GetSuggestions: Takes a SuggestionRequest containing a book name and returns a SuggestionResponse
+    with a list of suggested books.
+    """
 
     def __init__(self, channel):
         """Constructor.
@@ -22,7 +28,13 @@ class SuggestionsServiceStub(object):
 
 
 class SuggestionsServiceServicer(object):
-    """Missing associated documentation comment in .proto file."""
+    """
+    SuggestionsService provides book recommendations based on the provided book name.
+
+    The service consists of a single RPC method:
+    - GetSuggestions: Takes a SuggestionRequest containing a book name and returns a SuggestionResponse
+    with a list of suggested books.
+    """
 
     def GetSuggestions(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -46,7 +58,13 @@ def add_SuggestionsServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class SuggestionsService(object):
-    """Missing associated documentation comment in .proto file."""
+    """
+    SuggestionsService provides book recommendations based on the provided book name.
+
+    The service consists of a single RPC method:
+    - GetSuggestions: Takes a SuggestionRequest containing a book name and returns a SuggestionResponse
+    with a list of suggested books.
+    """
 
     @staticmethod
     def GetSuggestions(request,

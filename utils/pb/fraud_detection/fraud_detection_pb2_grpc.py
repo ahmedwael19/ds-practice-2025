@@ -6,7 +6,13 @@ import fraud_detection_pb2 as fraud__detection__pb2
 
 
 class FraudServiceStub(object):
-    """Missing associated documentation comment in .proto file."""
+    """
+    FraudService is responsible for evaluating whether a transaction is fraudulent.
+
+    The service consists of a single RPC method:
+    - DetectFraud: Takes a FraudRequest containing user and credit card details and returns a FraudResponse 
+    indicating whether the transaction is approved or flagged as fraudulent.
+    """
 
     def __init__(self, channel):
         """Constructor.
@@ -22,7 +28,13 @@ class FraudServiceStub(object):
 
 
 class FraudServiceServicer(object):
-    """Missing associated documentation comment in .proto file."""
+    """
+    FraudService is responsible for evaluating whether a transaction is fraudulent.
+
+    The service consists of a single RPC method:
+    - DetectFraud: Takes a FraudRequest containing user and credit card details and returns a FraudResponse 
+    indicating whether the transaction is approved or flagged as fraudulent.
+    """
 
     def DetectFraud(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -46,7 +58,13 @@ def add_FraudServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class FraudService(object):
-    """Missing associated documentation comment in .proto file."""
+    """
+    FraudService is responsible for evaluating whether a transaction is fraudulent.
+
+    The service consists of a single RPC method:
+    - DetectFraud: Takes a FraudRequest containing user and credit card details and returns a FraudResponse 
+    indicating whether the transaction is approved or flagged as fraudulent.
+    """
 
     @staticmethod
     def DetectFraud(request,

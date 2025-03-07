@@ -13,7 +13,7 @@ class Item(_message.Message):
     quantity: int
     def __init__(self, name: _Optional[str] = ..., quantity: _Optional[int] = ...) -> None: ...
 
-class creditCardInfo(_message.Message):
+class CreditCardInfo(_message.Message):
     __slots__ = ("number", "expirationDate", "cvv")
     NUMBER_FIELD_NUMBER: _ClassVar[int]
     EXPIRATIONDATE_FIELD_NUMBER: _ClassVar[int]
@@ -28,8 +28,8 @@ class TransactionRequest(_message.Message):
     ITEMS_FIELD_NUMBER: _ClassVar[int]
     CREDIT_CARD_FIELD_NUMBER: _ClassVar[int]
     items: _containers.RepeatedCompositeFieldContainer[Item]
-    credit_card: creditCardInfo
-    def __init__(self, items: _Optional[_Iterable[_Union[Item, _Mapping]]] = ..., credit_card: _Optional[_Union[creditCardInfo, _Mapping]] = ...) -> None: ...
+    credit_card: CreditCardInfo
+    def __init__(self, items: _Optional[_Iterable[_Union[Item, _Mapping]]] = ..., credit_card: _Optional[_Union[CreditCardInfo, _Mapping]] = ...) -> None: ...
 
 class TransactionResponse(_message.Message):
     __slots__ = ("approved",)

@@ -6,7 +6,13 @@ import transaction_verification_pb2 as transaction__verification__pb2
 
 
 class TransactionServiceStub(object):
-    """Missing associated documentation comment in .proto file."""
+    """
+    TransactionService handles transaction validation.
+
+    The service consists of a single RPC method:
+    - VerifyTransaction: Takes a TransactionRequest containing items and credit card details 
+    and returns a TransactionResponse indicating whether the transaction is approved.
+    """
 
     def __init__(self, channel):
         """Constructor.
@@ -22,7 +28,13 @@ class TransactionServiceStub(object):
 
 
 class TransactionServiceServicer(object):
-    """Missing associated documentation comment in .proto file."""
+    """
+    TransactionService handles transaction validation.
+
+    The service consists of a single RPC method:
+    - VerifyTransaction: Takes a TransactionRequest containing items and credit card details 
+    and returns a TransactionResponse indicating whether the transaction is approved.
+    """
 
     def VerifyTransaction(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -46,7 +58,13 @@ def add_TransactionServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class TransactionService(object):
-    """Missing associated documentation comment in .proto file."""
+    """
+    TransactionService handles transaction validation.
+
+    The service consists of a single RPC method:
+    - VerifyTransaction: Takes a TransactionRequest containing items and credit card details 
+    and returns a TransactionResponse indicating whether the transaction is approved.
+    """
 
     @staticmethod
     def VerifyTransaction(request,

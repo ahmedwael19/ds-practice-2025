@@ -1,55 +1,127 @@
-import sys
+"""
+Suggestions Service for Book Recommendations
+
+This module implements a gRPC service that provides book suggestions based on user input.
+It integrates with OpenAI's GPT model to generate book recommendations.
+
+Author: Ahmed Soliman, Buraq Khan
+Date: 2025-03-07
+"""
+
 import os
-import grpc
+import sys
+import json
 import logging
+import grpc
+import openai
 from concurrent import futures
 from random import randrange
 
+# gRPC Protobuf imports
 FILE = __file__ if '__file__' in globals() else os.getenv("PYTHONFILE", "")
 suggestions_grpc_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/suggestions'))
 sys.path.insert(0, suggestions_grpc_path)
-import suggestions_pb2, suggestions_pb2_grpc
+import suggestions_pb2
+import suggestions_pb2_grpc
 
+# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("suggestions")
 
+# OpenAI API Key
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
 class SuggestionsService(suggestions_pb2_grpc.SuggestionsServiceServicer):
+    """
+    gRPC Service that provides book suggestions based on user input.
+    It interacts with OpenAI's GPT model to generate recommendations.
+    """
+    
     def GetSuggestions(self, request, context):
-        cid = "N/A"
-        for key, value in context.invocation_metadata():
-            if key == "correlation-id":
-                cid = value
-                break
-        logger.info(f"[{cid}] Received GetSuggestions request for book_name: {request.book_name}")
+        """
+        Handles gRPC requests for book recommendations.
+        
+        Args:
+            request (suggestions_pb2.SuggestionRequest): The incoming request containing the book name.
+            context (grpc.ServicerContext): gRPC context for handling metadata and errors.
+        
+        Returns:
+            suggestions_pb2.SuggestionResponse: The response containing book recommendations.
+        """
+        # Extract correlation ID from metadata (if available)
+        correlation_id = next((value for key, value in context.invocation_metadata() if key == "correlation-id"), "N/A")
+        logger.info(f"[{correlation_id}] Received GetSuggestions request for book_name: {request.book_name}")
+        
         response = suggestions_pb2.SuggestionResponse()
-        suggested_books_list = [
-            {'bookId': '123', 'title': 'The Best Book', 'author': 'Author'},
-            {'bookId': '124', 'title': 'Harry Potter', 'author': 'JK Rowling'},
-            {'bookId': '125', 'title': 'Lord of the Rings', 'author': 'Author 1'},
-            {'bookId': '126', 'title': 'Dune', 'author': 'Author 2'},
-            {'bookId': '127', 'title': 'Sherlock Holmes', 'author': 'Author 3'},
-            {'bookId': '128', 'title': 'Hello World', 'author': 'Author 4'},
-            {'bookId': '129', 'title': 'I dislike distributed systems', 'author': 'Author 5'}
-        ]
-        indices = [randrange(7) for _ in range(3)]
-        for i in indices:
-            sb = suggestions_pb2.SuggestedBook()
-            sb.bookId = suggested_books_list[i]['bookId']
-            sb.title = suggested_books_list[i]['title']
-            sb.author = suggested_books_list[i]['author']
-            response.suggested_books.append(sb)
-        response.approved = True
-        logger.info(f"[{cid}] GetSuggestions completed with {len(response.suggested_books)} suggestions")
-        return response
+        try:
+            # Construct AI prompt for book recommendations
+            prompt = (
+                f"Suggest 3 books similar to '{request.book_name}'. "
+                "Return your response as a JSON array of objects, "
+                "where each object has keys 'bookId', 'title', and 'author'."
+            )
+            logger.info(f"[{correlation_id}] Sending prompt to OpenAI for suggestions: {prompt}")
+            
+            # Query OpenAI API for book recommendations
+            ai_response = openai.ChatCompletion.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a book recommendation AI."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=150
+            )
+            
+            ai_message = ai_response.choices[0].message.content.strip()
+            
+            # Remove markdown formatting if present
+            if ai_message.startswith("```json"):
+                ai_message = ai_message[len("```json"):].strip()
+            if ai_message.endswith("```"):
+                ai_message = ai_message[:-3].strip()
+            
+            # Parse the AI response into a list of suggestions
+            try:
+                suggestions_list = json.loads(ai_message)
+            except json.JSONDecodeError:
+                logger.error(f"[{correlation_id}] Failed to parse AI response: {ai_message}")
+                suggestions_list = [
+                    {"bookId": "123", "title": "The Best Book", "author": "Author"}  # Fallback suggestion
+                ]
+            
+            # Populate the gRPC response with parsed suggestions
+            for suggestion in suggestions_list:
+                suggested_book = suggestions_pb2.SuggestedBook(
+                    bookId=str(suggestion.get("bookId", "")),
+                    title=suggestion.get("title", ""),
+                    author=suggestion.get("author", "")
+                )
+                response.suggested_books.append(suggested_book)
+            
+            response.approved = True
+            logger.info(f"[{correlation_id}] GetSuggestions completed with {len(response.suggested_books)} suggestions")
+            return response
+        
+        except Exception as e:
+            logger.exception(f"[{correlation_id}] Exception in GetSuggestions: {str(e)}")
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details("Internal error in suggestions service")
+            return response
+
 
 def serve():
+    """
+    Starts the gRPC server and listens for incoming requests.
+    """
     server = grpc.server(futures.ThreadPoolExecutor())
     suggestions_pb2_grpc.add_SuggestionsServiceServicer_to_server(SuggestionsService(), server)
     port = "50053"
-    server.add_insecure_port("[::]:" + port)
+    server.add_insecure_port(f"[::]:{port}")
     logger.info(f"Suggestions Service started on port {port}")
     server.start()
     server.wait_for_termination()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     serve()
