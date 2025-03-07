@@ -170,21 +170,23 @@ sequenceDiagram
     Orchestrator-->>User: Order Status + Suggestions (if approved)
     Note over Orchestrator: Logs final response
 ```
-## Architecture Diagram
-
+## 📊 Architecture Diagram
 ```mermaid
 graph TD;
-    User -->|HTTP Request| Orchestrator;
-    Orchestrator -->|gRPC Request| FraudDetection;
-    Orchestrator -->|gRPC Request| TransactionVerification;
-    Orchestrator -->|gRPC Request| Suggestions;
+    User["👤 User"] -->|HTTP Request| Orchestrator[🟢 Orchestrator API :5000];
+    
+    Orchestrator -->|gRPC :50051| FraudDetection[🔍 Fraud Detection Service];
+    Orchestrator -->|gRPC :50052| TransactionVerification[💳 Transaction Verification Service];
+    Orchestrator -->|gRPC :50053| Suggestions[📚 Book Suggestions Service];
+
     FraudDetection -->|gRPC Response| Orchestrator;
     TransactionVerification -->|gRPC Response| Orchestrator;
     Suggestions -->|gRPC Response| Orchestrator;
+    
     Orchestrator -->|HTTP Response| User;
-
-    %% Logging Components
-    subgraph Logging ["Logging System"]
+    
+    %% Logging System
+    subgraph Logging ["📝 Logging System"]
         Logger
     end
 
@@ -192,6 +194,7 @@ graph TD;
     TransactionVerification -->|Logs| Logger;
     Suggestions -->|Logs| Logger;
     Orchestrator -->|Logs| Logger;
+
 ```
 
 ## Project Contributors
