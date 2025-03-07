@@ -25,44 +25,34 @@ import suggestions_pb2
 import suggestions_pb2_grpc
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("suggestions")
 
-# OpenAI API Key
+# Initialize OpenAI API key from environment
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 class SuggestionsService(suggestions_pb2_grpc.SuggestionsServiceServicer):
     """
     gRPC Service that provides book suggestions based on user input.
-    It interacts with OpenAI's GPT model to generate recommendations.
     """
-    
+
     def GetSuggestions(self, request, context):
         """
         Handles gRPC requests for book recommendations.
-        
-        Args:
-            request (suggestions_pb2.SuggestionRequest): The incoming request containing the book name.
-            context (grpc.ServicerContext): gRPC context for handling metadata and errors.
-        
-        Returns:
-            suggestions_pb2.SuggestionResponse: The response containing book recommendations.
         """
-        # Extract correlation ID from metadata (if available)
-        correlation_id = next((value for key, value in context.invocation_metadata() if key == "correlation-id"), "N/A")
-        logger.info(f"[{correlation_id}] Received GetSuggestions request for book_name: {request.book_name}")
-        
+        correlation_id = next((value for key, value in context.invocation_metadata()
+                                 if key == "correlation-id"), "N/A")
+        logger.info(f"[{correlation_id}] [Suggestions] Request received for book: {request.book_name}")
+
         response = suggestions_pb2.SuggestionResponse()
         try:
-            # Construct AI prompt for book recommendations
             prompt = (
                 f"Suggest 3 books similar to '{request.book_name}'. "
                 "Return your response as a JSON array of objects, "
                 "where each object has keys 'bookId', 'title', and 'author'."
             )
-            logger.info(f"[{correlation_id}] Sending prompt to OpenAI for suggestions: {prompt}")
-            
-            # Query OpenAI API for book recommendations
+            logger.info(f"[{correlation_id}] [Suggestions] Prompt sent to OpenAI.")
             ai_response = openai.ChatCompletion.create(
                 model="gpt-4o-mini",
                 messages=[
@@ -72,25 +62,22 @@ class SuggestionsService(suggestions_pb2_grpc.SuggestionsServiceServicer):
                 temperature=0.7,
                 max_tokens=150
             )
-            
             ai_message = ai_response.choices[0].message.content.strip()
-            
+
             # Remove markdown formatting if present
             if ai_message.startswith("```json"):
                 ai_message = ai_message[len("```json"):].strip()
             if ai_message.endswith("```"):
                 ai_message = ai_message[:-3].strip()
-            
-            # Parse the AI response into a list of suggestions
+
             try:
                 suggestions_list = json.loads(ai_message)
             except json.JSONDecodeError:
-                logger.error(f"[{correlation_id}] Failed to parse AI response: {ai_message}")
+                logger.error(f"[{correlation_id}] [Suggestions] Error parsing OpenAI response: {ai_message}")
                 suggestions_list = [
-                    {"bookId": "123", "title": "The Best Book", "author": "Author"}  # Fallback suggestion
+                    {"bookId": "123", "title": "The Best Book", "author": "Author"}
                 ]
-            
-            # Populate the gRPC response with parsed suggestions
+
             for suggestion in suggestions_list:
                 suggested_book = suggestions_pb2.SuggestedBook(
                     bookId=str(suggestion.get("bookId", "")),
@@ -98,17 +85,16 @@ class SuggestionsService(suggestions_pb2_grpc.SuggestionsServiceServicer):
                     author=suggestion.get("author", "")
                 )
                 response.suggested_books.append(suggested_book)
-            
+
             response.approved = True
-            logger.info(f"[{correlation_id}] GetSuggestions completed with {len(response.suggested_books)} suggestions")
+            logger.info(f"[{correlation_id}] [Suggestions] Suggestions generated: {len(response.suggested_books)} items.")
             return response
-        
+
         except Exception as e:
-            logger.exception(f"[{correlation_id}] Exception in GetSuggestions: {str(e)}")
+            logger.exception(f"[{correlation_id}] [Suggestions] Exception: {str(e)}")
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details("Internal error in suggestions service")
             return response
-
 
 def serve():
     """
@@ -121,7 +107,6 @@ def serve():
     logger.info(f"Suggestions Service started on port {port}")
     server.start()
     server.wait_for_termination()
-
 
 if __name__ == "__main__":
     serve()

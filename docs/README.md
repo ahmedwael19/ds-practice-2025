@@ -16,7 +16,7 @@ This project implements a **microservices-based architecture** using **gRPC** an
 - Returns a simple approval decision based on high-confidence fraud signals.
 
 ### 2. **Transaction Verification Service (`transaction_verification`)**
-- Validates transaction details such as item information, credit card format, and Luhn algorithm check.
+- Validates transaction details such as item information, credit card format, Luhn algorithm check, and shipping method.
 - Logs validation results concisely.
 - Returns an approval status along with a clear rejection message when needed.
 
@@ -200,10 +200,10 @@ sequenceDiagram
     
     Orchestrator-->>User: Order status + suggestions
     Note over Orchestrator: Logs final aggregated response
+
 ```
 
 ### Architecture Diagram
-
 ```mermaid
 graph TD;
     User["👤 User"] -->|HTTP Request| Orchestrator[🟢 Orchestrator API :5000];
@@ -230,9 +230,7 @@ graph TD;
     TransactionVerification -->|Logs| Logger;
     Suggestions -->|Logs| Logger;
     Orchestrator -->|Logs| Logger;
-
 ```
-
 ---
 
 ## Project Contributors
@@ -241,5 +239,3 @@ graph TD;
 |-------------------|-------------------|
 | **Ahmed Soliman** | soliman@ut.ee     |
 | **Buraq Khan**    | buraq@ut.ee       |
-
----

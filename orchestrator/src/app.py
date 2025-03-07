@@ -17,7 +17,6 @@ Date: 2025-03-07
 import os
 import sys
 import json
-import uuid
 import time
 import grpc
 import logging
@@ -27,10 +26,9 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from google.protobuf.json_format import MessageToDict
 
-# gRPC Protobuf imports
+# Set up paths for gRPC service stubs
 FILE = __file__ if '__file__' in globals() else os.getenv("PYTHONFILE", "")
 
-# Set up paths for gRPC service stubs
 fraud_detection_grpc_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/fraud_detection'))
 sys.path.insert(0, fraud_detection_grpc_path)
 import fraud_detection_pb2, fraud_detection_pb2_grpc
@@ -43,8 +41,9 @@ suggestions_grpc_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/su
 sys.path.insert(0, suggestions_grpc_path)
 import suggestions_pb2, suggestions_pb2_grpc
 
-# Configure logging to capture service activity
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Configure logging
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("orchestrator")
 
 # Initialize Flask app and enable CORS
@@ -56,17 +55,8 @@ def generate_correlation_id():
     return f"{time.strftime('%Y%m%d%H%M%S')}-{randrange(1000, 9999)}"
 
 def call_fraud_detection(order_data):
-    """
-    Calls the Fraud Detection gRPC service to check for fraudulent transactions.
-    
-    Args:
-        order_data (dict): The order data containing user and credit card information.
-    
-    Returns:
-        dict: The fraud detection result.
-    """
     cid = order_data.get("correlation_id", generate_correlation_id())
-    logger.info(f"[{cid}] Calling fraud detection service")
+    logger.info(f"[{cid}] [Orchestrator] Calling Fraud Detection service.")
     with grpc.insecure_channel("fraud_detection:50051") as channel:
         stub = fraud_detection_pb2_grpc.FraudServiceStub(channel)
         response = stub.DetectFraud(
@@ -76,21 +66,12 @@ def call_fraud_detection(order_data):
             ),
             metadata=(("correlation-id", cid),)
         )
-    logger.info(f"[{cid}] Fraud detection response received")
+    logger.info(f"[{cid}] [Orchestrator] Fraud Detection response received.")
     return {"fraud_detection": response}
 
 def call_transaction_verification(order_data):
-    """
-    Calls the Transaction Verification gRPC service to validate credit card details.
-    
-    Args:
-        order_data (dict): The order data containing credit card information.
-    
-    Returns:
-        dict: The transaction verification result.
-    """
     cid = order_data.get("correlation_id", generate_correlation_id())
-    logger.info(f"[{cid}] Calling transaction verification service")
+    logger.info(f"[{cid}] [Orchestrator] Calling Transaction Verification service.")
     with grpc.insecure_channel("transaction_verification:50052") as channel:
         stub = transaction_verification_pb2_grpc.TransactionServiceStub(channel)
         response = stub.VerifyTransaction(
@@ -100,61 +81,74 @@ def call_transaction_verification(order_data):
             ),
             metadata=(("correlation-id", cid),)
         )
-    logger.info(f"[{cid}] Transaction verification response received")
+    logger.info(f"[{cid}] [Orchestrator] Transaction Verification response received.")
     return {"transaction_verification": response}
 
 def call_suggestions(order_data):
-    """
-    Calls the Book Suggestions gRPC service to fetch recommendations based on purchases.
-    
-    Args:
-        order_data (dict): The order data containing purchased items.
-    
-    Returns:
-        dict: The book suggestions result.
-    """
     cid = order_data.get("correlation_id", generate_correlation_id())
     try:
+        # Attempt to extract a book name from the order items, fallback to "random"
         book_name = order_data.get("items", [])[0].get("items", {}).get("name", "random")
     except Exception:
         book_name = "random"
-    logger.info(f"[{cid}] Calling suggestions service with book_name: {book_name}")
+    logger.info(f"[{cid}] [Orchestrator] Calling Suggestions service (book: {book_name}).")
     with grpc.insecure_channel("suggestions:50053") as channel:
         stub = suggestions_pb2_grpc.SuggestionsServiceStub(channel)
         response = stub.GetSuggestions(
             suggestions_pb2.SuggestionRequest(book_name=book_name),
             metadata=(("correlation-id", cid),)
         )
-    logger.info(f"[{cid}] Suggestions service response received")
+    logger.info(f"[{cid}] [Orchestrator] Suggestions response received.")
     return {"suggestions": response}
 
 @app.route('/checkout', methods=['POST'])
 def checkout():
-    """
-    Handles checkout requests by orchestrating multiple gRPC service calls in parallel.
-    """
     cid = generate_correlation_id()
-    logger.info(f"[{cid}] Received checkout request")
+    logger.info(f"[{cid}] [Orchestrator] Checkout request received.")
     try:
         order_data = json.loads(request.data)
         order_data["correlation_id"] = cid
         results = {}
         with ThreadPoolExecutor(max_workers=3) as executor:
-            futures = [
+            futures_list = [
                 executor.submit(call_fraud_detection, order_data),
                 executor.submit(call_transaction_verification, order_data),
                 executor.submit(call_suggestions, order_data)
             ]
-            for future in as_completed(futures):
+            for future in as_completed(futures_list):
                 results.update(future.result())
-                logger.info(f"[{cid}] One service thread completed")
-        order_status = "Order Approved" if results.get("fraud_detection", {}).approved and results.get("transaction_verification", {}).approved else "Order Rejected"
-        suggested_books = [MessageToDict(book) for book in results.get("suggestions", {}).suggested_books] if order_status == "Order Approved" else []
-        final_response = {"orderId": "12345", "status": order_status, "suggestedBooks": suggested_books}
-        logger.info(f"[{cid}] Checkout completed with response: {final_response}")
+                logger.info(f"[{cid}] [Orchestrator] Service thread completed.")
+
+        fraud_response = results.get("fraud_detection", None)
+        txn_response = results.get("transaction_verification", None)
+        suggestions_response = results.get("suggestions", None)
+
+        if fraud_response and txn_response:
+            if fraud_response.approved and txn_response.approved:
+                order_status = "Order Approved"
+                suggested_books = (
+                    [MessageToDict(book) for book in suggestions_response.suggested_books]
+                    if suggestions_response and suggestions_response.suggested_books
+                    else []
+                )
+            elif not fraud_response.approved:
+                order_status = "Order Rejected: Fraud detection failed"
+                suggested_books = []
+            elif not txn_response.approved:
+                rejection_reason = txn_response.message if txn_response.message else "Transaction verification failed"
+                order_status = f"Order Rejected: {rejection_reason}"
+                suggested_books = []
+        else:
+            order_status = "Order Rejected: Service error"
+            suggested_books = []
+
+        # Always include 'suggestedBooks' (even if empty)
+        final_response = {"orderId": "12345", "status": order_status, "suggestedBooks": suggested_books if order_status == "Order Approved" else []}
+
+        logger.info(f"[{cid}] [Orchestrator] Checkout completed with response: {final_response}")
         return jsonify(final_response)
     except Exception as e:
-        logger.exception(f"[{cid}] Error processing checkout: {str(e)}")
+        logger.exception(f"[{cid}] [Orchestrator] Error: {str(e)}")
         return jsonify({"error": {"message": "Internal server error"}}), 500
 
 if __name__ == '__main__':

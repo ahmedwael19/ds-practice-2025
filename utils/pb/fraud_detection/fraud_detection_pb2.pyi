@@ -23,15 +23,23 @@ class CreditCardInfo(_message.Message):
     def __init__(self, number: _Optional[str] = ..., expirationDate: _Optional[str] = ..., cvv: _Optional[str] = ...) -> None: ...
 
 class FraudRequest(_message.Message):
-    __slots__ = ("user_info", "credit_card")
+    __slots__ = ("user_info", "credit_card", "transaction_id", "timestamp")
     USER_INFO_FIELD_NUMBER: _ClassVar[int]
     CREDIT_CARD_FIELD_NUMBER: _ClassVar[int]
+    TRANSACTION_ID_FIELD_NUMBER: _ClassVar[int]
+    TIMESTAMP_FIELD_NUMBER: _ClassVar[int]
     user_info: UserInfo
     credit_card: CreditCardInfo
-    def __init__(self, user_info: _Optional[_Union[UserInfo, _Mapping]] = ..., credit_card: _Optional[_Union[CreditCardInfo, _Mapping]] = ...) -> None: ...
+    transaction_id: str
+    timestamp: str
+    def __init__(self, user_info: _Optional[_Union[UserInfo, _Mapping]] = ..., credit_card: _Optional[_Union[CreditCardInfo, _Mapping]] = ..., transaction_id: _Optional[str] = ..., timestamp: _Optional[str] = ...) -> None: ...
 
 class FraudResponse(_message.Message):
-    __slots__ = ("approved",)
+    __slots__ = ("approved", "confidence", "reason")
     APPROVED_FIELD_NUMBER: _ClassVar[int]
+    CONFIDENCE_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
     approved: bool
-    def __init__(self, approved: bool = ...) -> None: ...
+    confidence: float
+    reason: str
+    def __init__(self, approved: bool = ..., confidence: _Optional[float] = ..., reason: _Optional[str] = ...) -> None: ...
