@@ -1,29 +1,43 @@
+
+---
+
 # Project Documentation
 
 ## Overview
 This project implements a **microservices-based architecture** using **gRPC** and **Flask** to facilitate transaction validation and book recommendation services. The system consists of multiple services communicating over gRPC, with an **Orchestrator API** acting as a central gateway.
 
+
 ## Services Overview
 
 ### 1. **Fraud Detection Service (`fraud_detection`)**
-- Validates transactions by analyzing user and credit card information.
-- Determines if a transaction is fraudulent.
+- Analyzes user and credit card details.
+- Uses both rule-based checks (e.g., card velocity) and advanced AI analysis.
+- Logs every step with a standardized format.
+- Returns a simple approval decision based on high-confidence fraud signals.
 
 ### 2. **Transaction Verification Service (`transaction_verification`)**
-- Verifies the validity of a credit card and purchase details.
-- Ensures transaction integrity.
+- Validates transaction details such as item information, credit card format, and Luhn algorithm check.
+- Logs validation results concisely.
+- Returns an approval status along with a clear rejection message when needed.
 
 ### 3. **Book Suggestions Service (`suggestions`)**
-- Recommends books based on user purchases.
+- Provides book recommendations based on the user's purchase.
+- Calls OpenAI’s GPT model to generate suggestions and formats them as a JSON array.
+- Uses consistent logging for AI prompt and response handling.
 
 ### 4. **Orchestrator Service (`orchestrator`)**
-- Manages and coordinates requests across all services.
-- Exposes an HTTP API (`/checkout`) using **Flask**.
-- Calls fraud detection, transaction verification, and book suggestion services in parallel.
+- Acts as the API gateway using Flask.
+- Receives checkout requests, generates a unique correlation ID, and concurrently calls the Fraud Detection, Transaction Verification, and Book Suggestions services.
+- Aggregates responses:
+  - If either Fraud Detection or Transaction Verification rejects the order, a clear rejection message is set.
+  - If both approve, the order is approved and book suggestions are included.
+- Always returns a `"suggestedBooks"` key (an empty array if no suggestions) to maintain a consistent API response.
+- Logs each step with a uniform and concise format.
 
 ---
 
 ## Project Structure
+
 ```
 .
 ├── README.md
@@ -54,59 +68,56 @@ This project implements a **microservices-based architecture** using **gRPC** an
 │   ├── requirements.txt
 │   └── src
 │       └── app.py
-├── utils
-│   ├── README.md
-│   ├── api
-│   │   ├── bookstore.yaml
-│   │   ├── fintech.yaml
-│   │   └── ridehailing.yaml
-│   ├── other
-│   │   └── hotreload.py
-│   └── pb
-│       ├── fraud_detection
-│       │   ├── __init__.py
-│       │   ├── fraud_detection.proto
-│       │   ├── fraud_detection_pb2.py
-│       │   ├── fraud_detection_pb2.pyi
-│       │   └── fraud_detection_pb2_grpc.py
-│       ├── suggestions
-│       │   ├── __init__.py
-│       │   │   ├── suggestions_pb2.cpython-311.pyc
-│       │   │   └── suggestions_pb2_grpc.cpython-311.pyc
-│       │   ├── suggestions.proto
-│       │   ├── suggestions_pb2.py
-│       │   ├── suggestions_pb2.pyi
-│       │   └── suggestions_pb2_grpc.py
-│       └── transaction_verification
-│           ├── __init__.py
-│           ├── transaction_verification.proto
-│           ├── transaction_verification_pb2.py
-│           ├── transaction_verification_pb2.pyi
-│           └── transaction_verification_pb2_grpc.py
-└── variables.env
+└── utils
+    ├── README.md
+    ├── api
+    │   ├── bookstore.yaml
+    │   ├── fintech.yaml
+    │   └── ridehailing.yaml
+    ├── other
+    │   └── hotreload.py
+    └── pb
+        ├── fraud_detection
+        │   ├── __init__.py
+        │   ├── fraud_detection.proto
+        │   ├── fraud_detection_pb2.py
+        │   ├── fraud_detection_pb2.pyi
+        │   └── fraud_detection_pb2_grpc.py
+        ├── suggestions
+        │   ├── __init__.py
+        │   ├── suggestions.proto
+        │   ├── suggestions_pb2.py
+        │   ├── suggestions_pb2.pyi
+        │   └── suggestions_pb2_grpc.py
+        └── transaction_verification
+            ├── __init__.py
+            ├── transaction_verification.proto
+            ├── transaction_verification_pb2.py
+            ├── transaction_verification_pb2.pyi
+            └── transaction_verification_pb2_grpc.py
 ```
+
 ---
 
 ## Service Communication Flow
 
-1. The **Orchestrator Service** receives a **checkout request** via HTTP.
-2. It generates a **correlation ID** and calls:
-   - **Fraud Detection Service** to check if the transaction is fraudulent.
-   - **Transaction Verification Service** to validate credit card details.
-   - **Suggestions Service** to provide book recommendations.
-3. These calls run **concurrently** using a `ThreadPoolExecutor`.
-4. Responses from all services are aggregated:
-   - If fraud detection or transaction verification fails → **Order is Rejected**.
-   - If successful → **Order is Approved**, and book suggestions are returned.
-5. The final response is sent back to the client.
+1. The **Orchestrator Service** receives a **checkout request** via an HTTP POST to `/checkout`.
+2. It generates a unique **correlation ID** and concurrently calls:
+   - **Fraud Detection Service** (to analyze the transaction for potential fraud).
+   - **Transaction Verification Service** (to validate credit card and purchase details).
+   - **Book Suggestions Service** (to generate book recommendations).
+3. Responses are aggregated:
+   - **Rejection:** If either Fraud Detection or Transaction Verification fails, the order is rejected with a clear reason (e.g., "Order Rejected: Fraud detection failed" or a specific transaction verification message).
+   - **Approval:** If both services approve, the order is approved and book suggestions are attached.
+4. The final response is returned to the client in a consistent JSON structure that always includes the `"suggestedBooks"` key.
 
 ---
 
 ## API Endpoints
 
 | Endpoint       | Method | Description |
-|---------------|--------|-------------|
-| `/checkout`   | `POST` | Handles checkout by validating transactions and suggesting books |
+|----------------|--------|-------------|
+| `/checkout`    | `POST` | Validates transactions and returns order status with book suggestions if approved |
 
 ### Example Checkout Request:
 
@@ -129,7 +140,11 @@ This project implements a **microservices-based architecture** using **gRPC** an
   ]
 }
 ```
+
 ### Example Response:
+
+If the order is approved:
+
 ```json
 {
   "orderId": "12345",
@@ -144,6 +159,18 @@ This project implements a **microservices-based architecture** using **gRPC** an
 }
 ```
 
+If the order is rejected (note the empty `"suggestedBooks"` array):
+
+```json
+{
+  "orderId": "12345",
+  "status": "Order Rejected: Fraud detection failed",
+  "suggestedBooks": []
+}
+```
+
+---
+
 ## System Diagram
 
 ```mermaid
@@ -153,24 +180,30 @@ sequenceDiagram
     participant FraudDetection
     participant TransactionVerification
     participant Suggestions
-    
+    participant OpenAI
+
     User->>Orchestrator: POST /checkout
-    Note over Orchestrator: Logs request received
+    Note over Orchestrator: Logs "Checkout request received"
     Orchestrator->>FraudDetection: Validate Transaction (gRPC)
     Orchestrator->>TransactionVerification: Verify Payment (gRPC)
     Orchestrator->>Suggestions: Fetch Book Recommendations (gRPC)
     
-    FraudDetection-->>Orchestrator: Fraud Check Result
-    Note over FraudDetection: Logs fraud validation
-    TransactionVerification-->>Orchestrator: Transaction Approved/Rejected
-    Note over TransactionVerification: Logs transaction status
-    Suggestions-->>Orchestrator: Suggested Books
-    Note over Suggestions: Logs book recommendations
+    FraudDetection->>OpenAI: Request fraud analysis
+    OpenAI-->>FraudDetection: AI analysis result
+    FraudDetection-->>Orchestrator: Fraud check result
     
-    Orchestrator-->>User: Order Status + Suggestions (if approved)
-    Note over Orchestrator: Logs final response
+    TransactionVerification-->>Orchestrator: Transaction approval status
+     
+    Suggestions->>OpenAI: Request book recommendations
+    OpenAI-->>Suggestions: Book recommendations
+    Suggestions-->>Orchestrator: Suggested books
+    
+    Orchestrator-->>User: Order status + suggestions
+    Note over Orchestrator: Logs final aggregated response
 ```
-## 📊 Architecture Diagram
+
+### Architecture Diagram
+
 ```mermaid
 graph TD;
     User["👤 User"] -->|HTTP Request| Orchestrator[🟢 Orchestrator API :5000];
@@ -178,6 +211,9 @@ graph TD;
     Orchestrator -->|gRPC :50051| FraudDetection[🔍 Fraud Detection Service];
     Orchestrator -->|gRPC :50052| TransactionVerification[💳 Transaction Verification Service];
     Orchestrator -->|gRPC :50053| Suggestions[📚 Book Suggestions Service];
+
+    FraudDetection -->|gRPC| OpenAI[🤖 OpenAI];
+    Suggestions -->|gRPC| OpenAI;
 
     FraudDetection -->|gRPC Response| Orchestrator;
     TransactionVerification -->|gRPC Response| Orchestrator;
@@ -197,10 +233,13 @@ graph TD;
 
 ```
 
+---
+
 ## Project Contributors
 
-| Name             | Email             |
-|-----------------|------------------|
-| **Ahmed Soliman** | soliman@ut.ee    |
-| **Buraq Khan**   | buraq@ut.ee      |
+| Name              | Email             |
+|-------------------|-------------------|
+| **Ahmed Soliman** | soliman@ut.ee     |
+| **Buraq Khan**    | buraq@ut.ee       |
 
+---
