@@ -10,7 +10,7 @@ class TransactionServiceStub(object):
     TransactionService handles transaction validation.
 
     The service consists of a single RPC method:
-    - VerifyTransaction: Takes a TransactionRequest containing items and credit card details 
+    - VerifyTransaction: Takes a TransactionRequest containing transaction details
     and returns a TransactionResponse indicating whether the transaction is approved.
     """
 
@@ -32,7 +32,7 @@ class TransactionServiceServicer(object):
     TransactionService handles transaction validation.
 
     The service consists of a single RPC method:
-    - VerifyTransaction: Takes a TransactionRequest containing items and credit card details 
+    - VerifyTransaction: Takes a TransactionRequest containing transaction details
     and returns a TransactionResponse indicating whether the transaction is approved.
     """
 
@@ -62,7 +62,7 @@ class TransactionService(object):
     TransactionService handles transaction validation.
 
     The service consists of a single RPC method:
-    - VerifyTransaction: Takes a TransactionRequest containing items and credit card details 
+    - VerifyTransaction: Takes a TransactionRequest containing transaction details
     and returns a TransactionResponse indicating whether the transaction is approved.
     """
 

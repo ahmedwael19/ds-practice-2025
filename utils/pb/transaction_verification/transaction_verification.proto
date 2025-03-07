@@ -29,10 +29,28 @@ message CreditCardInfo {
 }
 
 /*
+  Address contains billing or shipping address information.
+
+  Fields:
+  - street: Street address
+  - city: City name
+  - state: State or province
+  - zip: Zip or postal code
+  - country: Country name
+*/
+message Address {
+    string street = 1;
+    string city = 2;
+    string state = 3;
+    string zip = 4;
+    string country = 5;
+}
+
+/*
   TransactionService handles transaction validation.
 
   The service consists of a single RPC method:
-  - VerifyTransaction: Takes a TransactionRequest containing items and credit card details 
+  - VerifyTransaction: Takes a TransactionRequest containing transaction details
     and returns a TransactionResponse indicating whether the transaction is approved.
 */
 service TransactionService {
@@ -45,10 +63,18 @@ service TransactionService {
   Fields:
   - items: A list of purchased items.
   - credit_card: Credit card details used for the transaction.
+  - shippingMethod: Method of shipping (standard, express, overnight, etc.)
+  - discountCode: Promotional code applied to the transaction
+  - billingAddress: Billing address information
+  - termsAndConditionsAccepted: Whether the user accepted terms and conditions
 */
 message TransactionRequest {
     repeated Item items = 1;
     CreditCardInfo credit_card = 2;
+    string shippingMethod = 3;
+    string discountCode = 4;
+    Address billingAddress = 5;
+    bool termsAndConditionsAccepted = 6;
 }
 
 /*
@@ -56,7 +82,9 @@ message TransactionRequest {
 
   Fields:
   - approved: A boolean flag indicating whether the transaction is legitimate (true) or declined (false).
+  - message: A message explaining the reason if the transaction is declined.
 */
 message TransactionResponse {
     bool approved = 1;
+    string message = 2;
 }

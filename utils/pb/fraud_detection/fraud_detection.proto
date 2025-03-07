@@ -45,10 +45,14 @@ message CreditCardInfo {
   It contains:
   - user_info: User details (name and contact information).
   - credit_card: Credit card details used in the transaction.
+  - transaction_id: Unique identifier for the transaction (for tracking)
+  - timestamp: Time when the transaction occurred
 */
 message FraudRequest {
     UserInfo user_info = 1;
     CreditCardInfo credit_card = 2;
+    string transaction_id = 3;
+    string timestamp = 4;
 }
 
 /*
@@ -56,7 +60,11 @@ message FraudRequest {
 
   Fields:
   - approved: A boolean flag indicating whether the transaction is legitimate (true) or fraudulent (false).
+  - confidence: A score from 0.0-1.0 indicating the confidence level of the fraud decision
+  - reason: A message explaining the reason if the transaction is flagged as fraudulent.
 */
 message FraudResponse {
     bool approved = 1;
+    float confidence = 2;
+    string reason = 3;
 }
