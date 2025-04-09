@@ -18,6 +18,7 @@ import os
 import sys
 import json
 import time
+import uuid
 import grpc
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -61,6 +62,7 @@ def call_fraud_detection(order_data):
         stub = fraud_detection_pb2_grpc.FraudServiceStub(channel)
         response = stub.DetectFraud(
             fraud_detection_pb2.FraudRequest(
+                order_id=order_data["orderId"],
                 user_info=order_data.get("user", {}),
                 credit_card=order_data.get("creditCard", {})
             ),
@@ -76,6 +78,7 @@ def call_transaction_verification(order_data):
         stub = transaction_verification_pb2_grpc.TransactionServiceStub(channel)
         response = stub.VerifyTransaction(
             transaction_verification_pb2.TransactionRequest(
+                order_id=order_data["orderId"],
                 items=order_data.get("items", []),
                 credit_card=order_data.get("creditCard", {})
             ),
@@ -95,7 +98,10 @@ def call_suggestions(order_data):
     with grpc.insecure_channel("suggestions:50053") as channel:
         stub = suggestions_pb2_grpc.SuggestionsServiceStub(channel)
         response = stub.GetSuggestions(
-            suggestions_pb2.SuggestionRequest(book_name=book_name),
+            suggestions_pb2.SuggestionRequest(
+                book_name=book_name,
+                order_id=order_data["orderId"]
+            ),
             metadata=(("correlation-id", cid),)
         )
     logger.info(f"[{cid}] [Orchestrator] Suggestions response received.")
@@ -107,6 +113,7 @@ def checkout():
     logger.info(f"[{cid}] [Orchestrator] Checkout request received.")
     try:
         order_data = json.loads(request.data)
+        order_data["orderId"] = str(uuid.uuid4())
         order_data["correlation_id"] = cid
         results = {}
         with ThreadPoolExecutor(max_workers=3) as executor:
@@ -143,7 +150,7 @@ def checkout():
             suggested_books = []
 
         # Always include 'suggestedBooks' (even if empty)
-        final_response = {"orderId": "12345", "status": order_status, "suggestedBooks": suggested_books if order_status == "Order Approved" else []}
+        final_response = {"orderId": order_data["orderId"], "status": order_status, "suggestedBooks": suggested_books if order_status == "Order Approved" else []}
 
         logger.info(f"[{cid}] [Orchestrator] Checkout completed with response: {final_response}")
         return jsonify(final_response)

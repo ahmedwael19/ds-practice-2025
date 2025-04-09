@@ -6,13 +6,7 @@ import transaction_verification_pb2 as transaction__verification__pb2
 
 
 class TransactionServiceStub(object):
-    """
-    TransactionService handles transaction validation.
-
-    The service consists of a single RPC method:
-    - VerifyTransaction: Takes a TransactionRequest containing transaction details
-    and returns a TransactionResponse indicating whether the transaction is approved.
-    """
+    """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
         """Constructor.
@@ -20,6 +14,31 @@ class TransactionServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
+        self.InitializeTransaction = channel.unary_unary(
+                '/transaction.TransactionService/InitializeTransaction',
+                request_serializer=transaction__verification__pb2.InitRequest.SerializeToString,
+                response_deserializer=transaction__verification__pb2.EventResponse.FromString,
+                )
+        self.VerifyItems = channel.unary_unary(
+                '/transaction.TransactionService/VerifyItems',
+                request_serializer=transaction__verification__pb2.EventRequest.SerializeToString,
+                response_deserializer=transaction__verification__pb2.EventResponse.FromString,
+                )
+        self.VerifyUserData = channel.unary_unary(
+                '/transaction.TransactionService/VerifyUserData',
+                request_serializer=transaction__verification__pb2.EventRequest.SerializeToString,
+                response_deserializer=transaction__verification__pb2.EventResponse.FromString,
+                )
+        self.VerifyCreditCardFormat = channel.unary_unary(
+                '/transaction.TransactionService/VerifyCreditCardFormat',
+                request_serializer=transaction__verification__pb2.EventRequest.SerializeToString,
+                response_deserializer=transaction__verification__pb2.EventResponse.FromString,
+                )
+        self.ClearTransactionCache = channel.unary_unary(
+                '/transaction.TransactionService/ClearTransactionCache',
+                request_serializer=transaction__verification__pb2.ClearCacheRequest.SerializeToString,
+                response_deserializer=transaction__verification__pb2.ClearCacheResponse.FromString,
+                )
         self.VerifyTransaction = channel.unary_unary(
                 '/transaction.TransactionService/VerifyTransaction',
                 request_serializer=transaction__verification__pb2.TransactionRequest.SerializeToString,
@@ -28,16 +47,47 @@ class TransactionServiceStub(object):
 
 
 class TransactionServiceServicer(object):
-    """
-    TransactionService handles transaction validation.
+    """Missing associated documentation comment in .proto file."""
 
-    The service consists of a single RPC method:
-    - VerifyTransaction: Takes a TransactionRequest containing transaction details
-    and returns a TransactionResponse indicating whether the transaction is approved.
-    """
+    def InitializeTransaction(self, request, context):
+        """Initial call to cache data and start the flow for this service
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def VerifyItems(self, request, context):
+        """Event a: Verify items are not empty
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def VerifyUserData(self, request, context):
+        """Event b: Verify user data fields are present (basic check)
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def VerifyCreditCardFormat(self, request, context):
+        """Event c: Verify credit card format
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ClearTransactionCache(self, request, context):
+        """Bonus: Clear cache for a specific order
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
 
     def VerifyTransaction(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """Keep original VerifyTransaction for now, maybe deprecate later
+        Or repurpose it if needed, but the new event methods are preferred
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -45,6 +95,31 @@ class TransactionServiceServicer(object):
 
 def add_TransactionServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
+            'InitializeTransaction': grpc.unary_unary_rpc_method_handler(
+                    servicer.InitializeTransaction,
+                    request_deserializer=transaction__verification__pb2.InitRequest.FromString,
+                    response_serializer=transaction__verification__pb2.EventResponse.SerializeToString,
+            ),
+            'VerifyItems': grpc.unary_unary_rpc_method_handler(
+                    servicer.VerifyItems,
+                    request_deserializer=transaction__verification__pb2.EventRequest.FromString,
+                    response_serializer=transaction__verification__pb2.EventResponse.SerializeToString,
+            ),
+            'VerifyUserData': grpc.unary_unary_rpc_method_handler(
+                    servicer.VerifyUserData,
+                    request_deserializer=transaction__verification__pb2.EventRequest.FromString,
+                    response_serializer=transaction__verification__pb2.EventResponse.SerializeToString,
+            ),
+            'VerifyCreditCardFormat': grpc.unary_unary_rpc_method_handler(
+                    servicer.VerifyCreditCardFormat,
+                    request_deserializer=transaction__verification__pb2.EventRequest.FromString,
+                    response_serializer=transaction__verification__pb2.EventResponse.SerializeToString,
+            ),
+            'ClearTransactionCache': grpc.unary_unary_rpc_method_handler(
+                    servicer.ClearTransactionCache,
+                    request_deserializer=transaction__verification__pb2.ClearCacheRequest.FromString,
+                    response_serializer=transaction__verification__pb2.ClearCacheResponse.SerializeToString,
+            ),
             'VerifyTransaction': grpc.unary_unary_rpc_method_handler(
                     servicer.VerifyTransaction,
                     request_deserializer=transaction__verification__pb2.TransactionRequest.FromString,
@@ -58,13 +133,92 @@ def add_TransactionServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class TransactionService(object):
-    """
-    TransactionService handles transaction validation.
+    """Missing associated documentation comment in .proto file."""
 
-    The service consists of a single RPC method:
-    - VerifyTransaction: Takes a TransactionRequest containing transaction details
-    and returns a TransactionResponse indicating whether the transaction is approved.
-    """
+    @staticmethod
+    def InitializeTransaction(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/transaction.TransactionService/InitializeTransaction',
+            transaction__verification__pb2.InitRequest.SerializeToString,
+            transaction__verification__pb2.EventResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def VerifyItems(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/transaction.TransactionService/VerifyItems',
+            transaction__verification__pb2.EventRequest.SerializeToString,
+            transaction__verification__pb2.EventResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def VerifyUserData(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/transaction.TransactionService/VerifyUserData',
+            transaction__verification__pb2.EventRequest.SerializeToString,
+            transaction__verification__pb2.EventResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def VerifyCreditCardFormat(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/transaction.TransactionService/VerifyCreditCardFormat',
+            transaction__verification__pb2.EventRequest.SerializeToString,
+            transaction__verification__pb2.EventResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def ClearTransactionCache(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/transaction.TransactionService/ClearTransactionCache',
+            transaction__verification__pb2.ClearCacheRequest.SerializeToString,
+            transaction__verification__pb2.ClearCacheResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
     @staticmethod
     def VerifyTransaction(request,

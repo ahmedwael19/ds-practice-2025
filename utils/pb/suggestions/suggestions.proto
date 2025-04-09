@@ -32,11 +32,12 @@ message SuggestedBook {
 
   Fields:
   - book_name: The name of the book used as a reference for generating recommendations.
-*/
-message SuggestionRequest {
-    string book_name = 1;
-}
-
+ */
+ message SuggestionRequest {
+     string book_name = 1;
+    string order_id = 2;
+ }
+ 
 /*
   SuggestionResponse is the output message returned by GetSuggestions.
 

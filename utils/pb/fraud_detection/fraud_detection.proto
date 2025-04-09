@@ -11,6 +11,8 @@ package fraud;  // Defines the package name to avoid conflicts when importing th
 */
 service FraudService {
     rpc DetectFraud (FraudRequest) returns (FraudResponse);
+    rpc CheckUserData (FraudRequest) returns (FraudResponse); // Event d
+    rpc CheckCreditCardData (FraudRequest) returns (FraudResponse); // Event e
 }
 
 /*
@@ -46,13 +48,15 @@ message CreditCardInfo {
   - user_info: User details (name and contact information).
   - credit_card: Credit card details used in the transaction.
   - transaction_id: Unique identifier for the transaction (for tracking)
+  - order_id: Unique identifier for the order (for vector clock tracking)
   - timestamp: Time when the transaction occurred
-*/
+ */
 message FraudRequest {
     UserInfo user_info = 1;
     CreditCardInfo credit_card = 2;
     string transaction_id = 3;
     string timestamp = 4;
+    string order_id = 5;
 }
 
 /*

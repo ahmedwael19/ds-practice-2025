@@ -16,10 +16,12 @@ class SuggestedBook(_message.Message):
     def __init__(self, bookId: _Optional[str] = ..., title: _Optional[str] = ..., author: _Optional[str] = ...) -> None: ...
 
 class SuggestionRequest(_message.Message):
-    __slots__ = ("book_name",)
+    __slots__ = ("book_name", "order_id")
     BOOK_NAME_FIELD_NUMBER: _ClassVar[int]
+    ORDER_ID_FIELD_NUMBER: _ClassVar[int]
     book_name: str
-    def __init__(self, book_name: _Optional[str] = ...) -> None: ...
+    order_id: str
+    def __init__(self, book_name: _Optional[str] = ..., order_id: _Optional[str] = ...) -> None: ...
 
 class SuggestionResponse(_message.Message):
     __slots__ = ("suggested_books", "approved")

@@ -1,14 +1,26 @@
-syntax = "proto3";  // Specifies that we are using Protocol Buffers version 3.
+syntax = "proto3";
 
-package transaction;  // Defines the package name to avoid conflicts when importing the generated code.
+package transaction;
 
-/*
-  Item represents a product in a transaction.
+// Common message for vector clock
+message VectorClock {
+    map<string, int32> clock = 1;
+}
 
-  Fields:
-  - name: The name of the item being purchased.
-  - quantity: The number of units of the item in the order.
-*/
+// Common message for event requests
+message EventRequest {
+    string order_id = 1;
+    VectorClock vector_clock = 2; // Incoming clock state
+}
+
+// Common message for event responses
+message EventResponse {
+    bool approved = 1;
+    string message = 2;
+    VectorClock vector_clock = 3; // Updated clock state
+}
+
+// Specific data structures needed by this service
 message Item {
     string name = 1;
     int32 quantity = 2;
@@ -46,14 +58,48 @@ message Address {
     string country = 5;
 }
 
-/*
-  TransactionService handles transaction validation.
+// Request for initializing the process and caching data
+message InitRequest {
+    string order_id = 1;
+    repeated Item items = 2;
+    CreditCardInfo credit_card = 3;
+    Address billingAddress = 4; // Assuming user data includes address
+    bool termsAndConditionsAccepted = 5;
+    string user_contact = 6; // Added for user data check
+    string user_name = 7; // Added for user data check
+    VectorClock vector_clock = 8; // Send initial clock from orchestrator
+}
 
-  The service consists of a single RPC method:
-  - VerifyTransaction: Takes a TransactionRequest containing transaction details
-    and returns a TransactionResponse indicating whether the transaction is approved.
-*/
+// Request to clear cache
+message ClearCacheRequest {
+    string order_id = 1;
+    VectorClock final_vector_clock = 2;
+}
+
+message ClearCacheResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+
 service TransactionService {
+    // Initial call to cache data and start the flow for this service
+    rpc InitializeTransaction (InitRequest) returns (EventResponse);
+
+    // Event a: Verify items are not empty
+    rpc VerifyItems (EventRequest) returns (EventResponse);
+
+    // Event b: Verify user data fields are present (basic check)
+    rpc VerifyUserData (EventRequest) returns (EventResponse);
+
+    // Event c: Verify credit card format
+    rpc VerifyCreditCardFormat (EventRequest) returns (EventResponse);
+
+    // Bonus: Clear cache for a specific order
+    rpc ClearTransactionCache (ClearCacheRequest) returns (ClearCacheResponse);
+
+    // Keep original VerifyTransaction for now, maybe deprecate later
+    // Or repurpose it if needed, but the new event methods are preferred
     rpc VerifyTransaction (TransactionRequest) returns (TransactionResponse);
 }
 
@@ -69,12 +115,14 @@ service TransactionService {
   - termsAndConditionsAccepted: Whether the user accepted terms and conditions
 */
 message TransactionRequest {
+    string order_id = 7;
     repeated Item items = 1;
     CreditCardInfo credit_card = 2;
     string shippingMethod = 3;
     string discountCode = 4;
     Address billingAddress = 5;
     bool termsAndConditionsAccepted = 6;
+    // Note: UserInfo fields (name, contact) are now in InitRequest
 }
 
 /*

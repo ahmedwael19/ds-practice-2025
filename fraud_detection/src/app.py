@@ -42,6 +42,8 @@ MAX_ATTEMPTS_THRESHOLD = 5
 # Timeframe in seconds (1 hour)
 ATTEMPT_TIMEFRAME = 3600
 
+ORDER_DATA_CACHE = {}
+
 class FraudService(fraud_detection_grpc.FraudServiceServicer):
     """
     gRPC Service that evaluates transaction data and determines if a transaction is fraudulent.
@@ -93,14 +95,61 @@ class FraudService(fraud_detection_grpc.FraudServiceServicer):
 
         return True
 
-    def DetectFraud(self, request, context):
+    def _initialize_vector_clock(self):
         """
-        Handles gRPC requests for fraud detection.
+        Initialize vector clock for the service
         """
-        # Extract correlation ID from metadata (if available)
+        return {
+            "transaction_verification": 0,
+            "fraud_detection": 0,
+            "suggestions": 0
+        }
+
+    def CheckUserData(self, request, context):
+        """
+        Handles gRPC requests for checking user data for fraud. (Event d)
+        """
         correlation_id = next((value for key, value in context.invocation_metadata()
                                  if key == "correlation-id"), "N/A")
-        logger.info(f"[{correlation_id}] [Fraud] Request received for user: {request.user_info.name}")
+        logger.info(f"[{correlation_id}] [Fraud] Checking user data for fraud (Event d).")
+
+        order_id = request.order_id
+        if order_id not in ORDER_DATA_CACHE:
+             logger.error(f"[{correlation_id}] [Fraud] Order ID {order_id} not found in cache.")
+             context.set_code(grpc.StatusCode.NOT_FOUND)
+             context.set_details(f"Order ID {order_id} not found.")
+             return fraud_detection.FraudResponse(approved=False)
+
+        vector_clock = ORDER_DATA_CACHE[order_id]["vector_clock"]
+        vector_clock["fraud_detection"] += 1
+        logger.info(f"[{correlation_id}] [Fraud] Vector clock for {order_id}: {vector_clock}")
+
+        response = fraud_detection.FraudResponse()
+        # Reuse existing AI logic for user data check (simplified for this example)
+        # In a real scenario, this might be a separate, more focused check
+        # For now, we'll just log and approve
+        logger.info(f"[{correlation_id}] [Fraud] User data check for {request.user_info.name} completed.")
+        response.approved = True
+        return response
+
+    def CheckCreditCardData(self, request, context):
+        """
+        Handles gRPC requests for checking credit card data for fraud. (Event e)
+        """
+        correlation_id = next((value for key, value in context.invocation_metadata()
+                                 if key == "correlation-id"), "N/A")
+        logger.info(f"[{correlation_id}] [Fraud] Checking credit card data for fraud (Event e).")
+
+        order_id = request.order_id
+        if order_id not in ORDER_DATA_CACHE:
+             logger.error(f"[{correlation_id}] [Fraud] Order ID {order_id} not found in cache.")
+             context.set_code(grpc.StatusCode.NOT_FOUND)
+             context.set_details(f"Order ID {order_id} not found.")
+             return fraud_detection.FraudResponse(approved=False)
+
+        vector_clock = ORDER_DATA_CACHE[order_id]["vector_clock"]
+        vector_clock["fraud_detection"] += 1
+        logger.info(f"[{correlation_id}] [Fraud] Vector clock for {order_id}: {vector_clock}")
 
         response = fraud_detection.FraudResponse()
 
@@ -111,7 +160,7 @@ class FraudService(fraud_detection_grpc.FraudServiceServicer):
                 response.approved = False
                 return response
 
-            # Step 2: Send to AI for advanced pattern detection
+            # Step 2: Send to AI for advanced pattern detection (reusing the existing logic)
             masked_cc = f"{'*' * (len(request.credit_card.number) - 4)}{request.credit_card.number[-4:]}"
             logger.info(f"[{correlation_id}] [Fraud] Initial checks passed; initiating AI analysis for card ending in {request.credit_card.number[-4:]}")
 
@@ -161,7 +210,7 @@ class FraudService(fraud_detection_grpc.FraudServiceServicer):
                     logger.info(f"[{correlation_id}] [Fraud] AI flagged issues (low confidence {confidence}): {reason}")
 
                 response.approved = True
-                logger.info(f"[{correlation_id}] [Fraud] Transaction approved.")
+                logger.info(f"[{correlation_id}] [Fraud] Credit card data check completed. Approved: {response.approved}")
                 return response
 
             except json.JSONDecodeError:
@@ -176,12 +225,42 @@ class FraudService(fraud_detection_grpc.FraudServiceServicer):
             response.approved = False
             return response
 
+    def DetectFraud(self, request, context):
+        """
+        Handles gRPC requests for fraud detection. This now acts as the initial entry point
+        to cache data and potentially trigger the first event if needed, but the main logic
+        is moved to specific event handlers.
+        """
+        # Extract correlation ID from metadata (if available)
+        correlation_id = next((value for key, value in context.invocation_metadata()
+                                 if key == "correlation-id"), "N/A")
+        logger.info(f"[{correlation_id}] [Fraud] Initial DetectFraud request received for user: {request.user_info.name}")
+
+        order_id = request.order_id
+        if order_id not in ORDER_DATA_CACHE:
+            ORDER_DATA_CACHE[order_id] = {
+                "request": request,
+                "vector_clock": self._initialize_vector_clock()
+            }
+            logger.info(f"[{correlation_id}] [Fraud] Order data cached for order_id: {order_id}")
+        else:
+             logger.info(f"[{correlation_id}] [Fraud] Order data already cached for order_id: {order_id}")
+
+        # This initial call might just confirm receipt and caching.
+        # The actual fraud checks are triggered by specific event calls from the orchestrator.
+        response = fraud_detection.FraudResponse()
+        response.approved = True # Indicate successful caching, not final approval
+        response.message = "Fraud detection process initiated."
+        return response
+
+
 def serve():
     """
     Starts the gRPC server and listens for incoming fraud detection requests.
     """
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    fraud_detection_grpc.add_FraudServiceServicer_to_server(FraudService(), server)
+    service = FraudService()
+    fraud_detection_grpc.add_FraudServiceServicer_to_server(service, server)
     port = "50051"
     server.add_insecure_port(f"[::]:{port}")
     logger.info(f"Fraud Detection Service started on port {port}")

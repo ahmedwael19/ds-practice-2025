@@ -29,6 +29,8 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("suggestions")
 
+ORDER_DATA_CACHE = {}
+
 # Initialize OpenAI API key from environment
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
@@ -37,12 +39,30 @@ class SuggestionsService(suggestions_pb2_grpc.SuggestionsServiceServicer):
     gRPC Service that provides book suggestions based on user input.
     """
 
+    def _initialize_vector_clock(self):
+        """
+        Initialize vector clock for the service
+        """
+        return {
+            "transaction_verification": 0,
+            "fraud_detection": 0,
+            "suggestions": 0
+        }
+
     def GetSuggestions(self, request, context):
         """
         Handles gRPC requests for book recommendations.
         """
         correlation_id = next((value for key, value in context.invocation_metadata()
                                  if key == "correlation-id"), "N/A")
+        order_id = request.order_id
+        if order_id not in ORDER_DATA_CACHE:
+            ORDER_DATA_CACHE[order_id] = {
+                "request": request,
+                "vector_clock": self._initialize_vector_clock()
+            }
+            logger.info(f"[{correlation_id}] [Suggestions] Order data cached for order_id: {order_id}")
+
         logger.info(f"[{correlation_id}] [Suggestions] Request received for book: {request.book_name}")
 
         response = suggestions_pb2.SuggestionResponse()
