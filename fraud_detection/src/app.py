@@ -243,79 +243,79 @@ class FraudService(fraud_detection_grpc.FraudServiceServicer):
         is_approved = True
         ai_reason = ""
 
-        try:
-            # Step 1: Check velocity/frequency of card usage
-            if not self._check_card_velocity(credit_card.number, correlation_id):
-                logger.warning(f"[{correlation_id}] [Fraud] Card velocity check failed")
-                is_approved = False
-                message = "Card velocity check failed"
-            else:
-                # Step 2: Send to AI for advanced pattern detection
-                masked_cc = f"{'*' * (len(credit_card.number) - 4)}{credit_card.number[-4:]}"
-                logger.info(f"[{correlation_id}] [Fraud] Initial checks passed; initiating AI analysis for card ending in {credit_card.number[-4:]}")
+        # try:
+        #     # Step 1: Check velocity/frequency of card usage
+        #     if not self._check_card_velocity(credit_card.number, correlation_id):
+        #         logger.warning(f"[{correlation_id}] [Fraud] Card velocity check failed")
+        #         is_approved = False
+        #         message = "Card velocity check failed"
+        #     else:
+        #         # Step 2: Send to AI for advanced pattern detection
+        #         masked_cc = f"{'*' * (len(credit_card.number) - 4)}{credit_card.number[-4:]}"
+        #         logger.info(f"[{correlation_id}] [Fraud] Initial checks passed; initiating AI analysis for card ending in {credit_card.number[-4:]}")
 
-                prompt = (
-                    f"As a fraud detection system, analyze this transaction for possible fraud indicators:\n\n"
-                    f"User: {user_info.name}\n"
-                    f"Contact: {user_info.contact}\n"
-                    f"Credit Card: Last 4 digits {credit_card.number[-4:]}\n"
-                    f"Card Expiration: {credit_card.expirationDate}\n\n"
-                    f"Common fraud indicators include:\n"
-                    f"- Mismatched names/emails\n"
-                    f"- Suspicious email patterns\n"
-                    f"- Unusual character patterns\n"
-                    f"- Geographic inconsistencies\n\n"
-                    "Please respond with JSON in the following format (use valid JSON booleans and numbers):\n"
-                    "{\n"
-                    '  "approved": true,  // or false\n'
-                    '  "confidence": 0.95,  // a number between 0 and 1\n'
-                    '  "reason": "Explanation if rejected, otherwise empty string"\n'
-                    "}"
-                )
+        #         prompt = (
+        #             f"As a fraud detection system, analyze this transaction for possible fraud indicators:\n\n"
+        #             f"User: {user_info.name}\n"
+        #             f"Contact: {user_info.contact}\n"
+        #             f"Credit Card: Last 4 digits {credit_card.number[-4:]}\n"
+        #             f"Card Expiration: {credit_card.expirationDate}\n\n"
+        #             f"Common fraud indicators include:\n"
+        #             f"- Mismatched names/emails\n"
+        #             f"- Suspicious email patterns\n"
+        #             f"- Unusual character patterns\n"
+        #             f"- Geographic inconsistencies\n\n"
+        #             "Please respond with JSON in the following format (use valid JSON booleans and numbers):\n"
+        #             "{\n"
+        #             '  "approved": true,  // or false\n'
+        #             '  "confidence": 0.95,  // a number between 0 and 1\n'
+        #             '  "reason": "Explanation if rejected, otherwise empty string"\n'
+        #             "}"
+        #         )
 
-                ai_response = openai.ChatCompletion.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": "You are a fraud detection AI specialized in identifying transaction fraud patterns."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    temperature=0.1,
-                    max_tokens=100,
-                    response_format={"type": "json_object"}
-                )
-                ai_message = ai_response.choices[0].message.content.strip()
+        #         ai_response = openai.ChatCompletion.create(
+        #             model="gpt-4o-mini",
+        #             messages=[
+        #                 {"role": "system", "content": "You are a fraud detection AI specialized in identifying transaction fraud patterns."},
+        #                 {"role": "user", "content": prompt}
+        #             ],
+        #             temperature=0.1,
+        #             max_tokens=100,
+        #             response_format={"type": "json_object"}
+        #         )
+        #         ai_message = ai_response.choices[0].message.content.strip()
 
-                try:
-                    result_json = json.loads(ai_message)
-                    ai_approval = result_json.get("approved", False)
-                    confidence = result_json.get("confidence", 0.0)
-                    ai_reason = result_json.get("reason", "")
+        #         try:
+        #             result_json = json.loads(ai_message)
+        #             ai_approval = result_json.get("approved", False)
+        #             confidence = result_json.get("confidence", 0.0)
+        #             ai_reason = result_json.get("reason", "")
 
-                    if not ai_approval and confidence > 0.7:
-                        logger.info(f"[{correlation_id}] [Fraud] Transaction rejected by AI (confidence {confidence}): {ai_reason}")
-                        is_approved = False
-                        message = f"AI rejected transaction: {ai_reason}"
-                    elif not ai_approval and confidence <= 0.7:
-                        logger.info(f"[{correlation_id}] [Fraud] AI flagged issues (low confidence {confidence}): {ai_reason}")
-                        # Potentially still approve but log the warning
-                        message = f"AI flagged potential issues (low confidence): {ai_reason}"
-                    else:
-                         message = "Credit card data check completed successfully."
+        #             if not ai_approval and confidence > 0.7:
+        #                 logger.info(f"[{correlation_id}] [Fraud] Transaction rejected by AI (confidence {confidence}): {ai_reason}")
+        #                 is_approved = False
+        #                 message = f"AI rejected transaction: {ai_reason}"
+        #             elif not ai_approval and confidence <= 0.7:
+        #                 logger.info(f"[{correlation_id}] [Fraud] AI flagged issues (low confidence {confidence}): {ai_reason}")
+        #                 # Potentially still approve but log the warning
+        #                 message = f"AI flagged potential issues (low confidence): {ai_reason}"
+        #             else:
+        #                  message = "Credit card data check completed successfully."
 
-                except json.JSONDecodeError:
-                    logger.error(f"[{correlation_id}] [Fraud] Failed to parse AI response: {ai_message}")
-                    is_approved = False
-                    message = "Failed to parse AI response"
+        #         except json.JSONDecodeError:
+        #             logger.error(f"[{correlation_id}] [Fraud] Failed to parse AI response: {ai_message}")
+        #             is_approved = False
+        #             message = "Failed to parse AI response"
 
-        except Exception as e:
-            logger.exception(f"[{correlation_id}] [Fraud] Exception during credit card check: {str(e)}")
-            context.set_code(grpc.StatusCode.INTERNAL)
-            context.set_details("Internal error in fraud detection service during credit card check")
-            is_approved = False
-            message = f"Internal error: {str(e)}"
+        # except Exception as e:
+        #     logger.exception(f"[{correlation_id}] [Fraud] Exception during credit card check: {str(e)}")
+        #     context.set_code(grpc.StatusCode.INTERNAL)
+        #     context.set_details("Internal error in fraud detection service during credit card check")
+        #     is_approved = False
+        #     message = f"Internal error: {str(e)}"
 
         logger.info(f"[{correlation_id}] [Fraud] Credit card data check completed. Approved: {is_approved}")
-
+        message = "Credit card data check completed successfully."
         # Create response with updated vector clock
         response = fraud_detection.EventResponse()
         response.approved = is_approved

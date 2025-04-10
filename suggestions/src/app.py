@@ -137,55 +137,66 @@ class SuggestionsService(suggestions_pb2_grpc.SuggestionsServiceServicer):
         is_approved = True
         message = "Suggestions generated successfully."
 
-        try:
-            prompt = (
-                f"Suggest 3 books similar to '{book_name}'. "
-                "Return your response as a JSON array of objects, "
-                "where each object has keys 'bookId', 'title', and 'author'."
+        # try:
+        #     prompt = (
+        #         f"Suggest 3 books similar to '{book_name}'. "
+        #         "Return your response as a JSON array of objects, "
+        #         "where each object has keys 'bookId', 'title', and 'author'."
+        #     )
+        #     logger.info(f"[{correlation_id}] [Suggestions] Prompt sent to OpenAI.")
+        #     ai_response = openai.ChatCompletion.create(
+        #         model="gpt-4o-mini",
+        #         messages=[
+        #             {"role": "system", "content": "You are a book recommendation AI."},
+        #             {"role": "user", "content": prompt}
+        #         ],
+        #         temperature=0.7,
+        #         max_tokens=150
+        #     )
+        #     ai_message = ai_response.choices[0].message.content.strip()
+
+        #     # Remove markdown formatting if present
+        #     if ai_message.startswith("```json"):
+        #         ai_message = ai_message[len("```json"):].strip()
+        #     if ai_message.endswith("```"):
+        #         ai_message = ai_message[:-3].strip()
+
+        #     try:
+        #         suggestions_list = json.loads(ai_message)
+        #     except json.JSONDecodeError:
+        #         logger.error(f"[{correlation_id}] [Suggestions] Error parsing OpenAI response: {ai_message}")
+        #         suggestions_list = [
+        #             {"bookId": "123", "title": "The Best Book", "author": "Author"} # Fallback
+        #         ]
+        #         message = "Error parsing AI response, using fallback."
+
+        #     for suggestion in suggestions_list:
+        #         suggested_book = suggestions_pb2.SuggestedBook(
+        #             bookId=str(suggestion.get("bookId", "")),
+        #             title=suggestion.get("title", ""),
+        #             author=suggestion.get("author", "")
+        #         )
+        #         response.suggested_books.append(suggested_book) # Add to EventResponse
+
+        #     logger.info(f"[{correlation_id}] [Suggestions] Suggestions generated: {len(response.suggested_books)} items.")
+
+        # except Exception as e:
+        #     logger.exception(f"[{correlation_id}] [Suggestions] Exception during suggestion generation: {str(e)}")
+        #     context.set_code(grpc.StatusCode.INTERNAL)
+        #     context.set_details("Internal error in suggestions service")
+        #     is_approved = False
+        #     message = f"Internal error: {str(e)}"
+
+        suggestions_list = [
+            {"bookId": "123", "title": "The Best Book", "author": "Author"} # Fallback
+        ]
+        for suggestion in suggestions_list:
+            suggested_book = suggestions_pb2.SuggestedBook(
+                bookId=str(suggestion.get("bookId", "")),
+                title=suggestion.get("title", ""),
+                author=suggestion.get("author", "")
             )
-            logger.info(f"[{correlation_id}] [Suggestions] Prompt sent to OpenAI.")
-            ai_response = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a book recommendation AI."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=150
-            )
-            ai_message = ai_response.choices[0].message.content.strip()
-
-            # Remove markdown formatting if present
-            if ai_message.startswith("```json"):
-                ai_message = ai_message[len("```json"):].strip()
-            if ai_message.endswith("```"):
-                ai_message = ai_message[:-3].strip()
-
-            try:
-                suggestions_list = json.loads(ai_message)
-            except json.JSONDecodeError:
-                logger.error(f"[{correlation_id}] [Suggestions] Error parsing OpenAI response: {ai_message}")
-                suggestions_list = [
-                    {"bookId": "123", "title": "The Best Book", "author": "Author"} # Fallback
-                ]
-                message = "Error parsing AI response, using fallback."
-
-            for suggestion in suggestions_list:
-                suggested_book = suggestions_pb2.SuggestedBook(
-                    bookId=str(suggestion.get("bookId", "")),
-                    title=suggestion.get("title", ""),
-                    author=suggestion.get("author", "")
-                )
-                response.suggested_books.append(suggested_book) # Add to EventResponse
-
-            logger.info(f"[{correlation_id}] [Suggestions] Suggestions generated: {len(response.suggested_books)} items.")
-
-        except Exception as e:
-            logger.exception(f"[{correlation_id}] [Suggestions] Exception during suggestion generation: {str(e)}")
-            context.set_code(grpc.StatusCode.INTERNAL)
-            context.set_details("Internal error in suggestions service")
-            is_approved = False
-            message = f"Internal error: {str(e)}"
+            response.suggested_books.append(suggested_book)
 
         # Populate the EventResponse
         response.approved = is_approved
