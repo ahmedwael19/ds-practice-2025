@@ -204,19 +204,11 @@ def call_check_credit_card_data(order_id, current_clock_dict, cid):
 
 def call_get_suggestions(order_id, current_clock_dict, cid):
     logger.info(f"[{cid}] [Orchestrator] Calling GetSuggestions (Event f) for order {order_id}")
-    # Need book_name from cache - assuming it was cached during InitializeSuggestions
-    # This highlights a potential need to pass book_name through the flow or retrieve it here.
-    # For simplicity, let's assume InitializeSuggestions cached it and we retrieve it if needed.
-    # A robust solution might involve passing necessary data along or having services fetch it.
-    # Let's assume book_name is not needed directly by the call signature based on proto.
     with grpc.insecure_channel("suggestions:50053") as channel:
         stub = suggestions_pb2_grpc.SuggestionsServiceStub(channel)
         request_pb = suggestions_pb2.EventRequest(
             order_id=order_id,
             vector_clock=dict_to_vector_clock(current_clock_dict, suggestions_pb2)
-            # book_name is part of EventRequest in suggestions.proto, need to get it
-            # This requires modification to how data is passed or stored.
-            # Let's assume for now the suggestions service retrieves it from its cache.
         )
         response = stub.GetSuggestions(request_pb, metadata=(("correlation-id", cid),))
     logger.info(f"[{cid}] [Orchestrator] GetSuggestions response. Approved: {response.approved}, Clock: {vector_clock_to_dict(response.vector_clock)}")
