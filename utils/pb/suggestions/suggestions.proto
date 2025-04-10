@@ -1,16 +1,25 @@
-syntax = "proto3";  // Specifies that we are using Protocol Buffers version 3.
+syntax = "proto3";
 
-package suggestions;  // Defines the package name to avoid conflicts when importing the generated code.
+package suggestions;
 
-/*
-  SuggestionsService provides book recommendations based on the provided book name.
+// Common message for vector clock
+message VectorClock {
+    map<string, int32> clock = 1;
+}
 
-  The service consists of a single RPC method:
-  - GetSuggestions: Takes a SuggestionRequest containing a book name and returns a SuggestionResponse
-    with a list of suggested books.
-*/
-service SuggestionsService {
-    rpc GetSuggestions (SuggestionRequest) returns (SuggestionResponse);
+// Common message for event requests (used by GetSuggestions)
+message EventRequest {
+    string order_id = 1;
+    VectorClock vector_clock = 2; // Incoming clock state
+    string book_name = 3; // Specific data needed for this event
+}
+
+// Common message for event responses (used by GetSuggestions, InitializeSuggestions)
+message EventResponse {
+    bool approved = 1;
+    string message = 2;
+    VectorClock vector_clock = 3; // Updated clock state
+    repeated SuggestedBook suggested_books = 4; // Specific data for this service's response
 }
 
 /*
@@ -27,19 +36,59 @@ message SuggestedBook {
     string author = 3;
 }
 
+// Request for initializing the process and caching data
+message InitRequest {
+    string order_id = 1;
+    string book_name = 2; // Book name needed for suggestions
+    VectorClock vector_clock = 3; // Send initial clock from orchestrator
+}
+
+// Request to clear cache
+message ClearCacheRequest {
+    string order_id = 1;
+    VectorClock final_vector_clock = 2;
+}
+
+message ClearCacheResponse {
+    bool success = 1;
+    string message = 2;
+}
+
 /*
-  SuggestionRequest is the input message for the GetSuggestions RPC.
+  SuggestionsService provides book recommendations based on the provided book name.
+*/
+service SuggestionsService {
+    // Initial call to cache data and start the flow for this service
+    rpc InitializeSuggestions (InitRequest) returns (EventResponse);
+
+    // Event f: Get book suggestions
+    // Takes EventRequest containing order_id, vector_clock, and book_name
+    // Returns EventResponse indicating approval, updated vector_clock, and suggested_books
+    rpc GetSuggestions (EventRequest) returns (EventResponse);
+
+    // Bonus: Clear cache for a specific order
+    rpc ClearSuggestionsCache (ClearCacheRequest) returns (ClearCacheResponse);
+
+    // Original GetSuggestions method, kept for potential backward compatibility.
+    // Takes SuggestionRequest containing book_name and order_id.
+    // Returns SuggestionResponse with suggested books.
+    rpc GetSuggestionsLegacy (SuggestionRequest) returns (SuggestionResponse);
+}
+
+/*
+  SuggestionRequest is the input message for the original GetSuggestionsLegacy RPC.
 
   Fields:
   - book_name: The name of the book used as a reference for generating recommendations.
+  - order_id: Unique identifier for the order (for vector clock tracking)
  */
  message SuggestionRequest {
      string book_name = 1;
-    string order_id = 2;
+     string order_id = 2;
  }
- 
+
 /*
-  SuggestionResponse is the output message returned by GetSuggestions.
+  SuggestionResponse is the output message returned by the original GetSuggestionsLegacy RPC.
 
   Fields:
   - suggested_books: A list of recommended books based on the provided book name.

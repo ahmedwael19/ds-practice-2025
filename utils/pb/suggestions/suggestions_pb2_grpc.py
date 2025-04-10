@@ -8,10 +8,6 @@ import suggestions_pb2 as suggestions__pb2
 class SuggestionsServiceStub(object):
     """
     SuggestionsService provides book recommendations based on the provided book name.
-
-    The service consists of a single RPC method:
-    - GetSuggestions: Takes a SuggestionRequest containing a book name and returns a SuggestionResponse
-    with a list of suggested books.
     """
 
     def __init__(self, channel):
@@ -20,8 +16,23 @@ class SuggestionsServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
+        self.InitializeSuggestions = channel.unary_unary(
+                '/suggestions.SuggestionsService/InitializeSuggestions',
+                request_serializer=suggestions__pb2.InitRequest.SerializeToString,
+                response_deserializer=suggestions__pb2.EventResponse.FromString,
+                )
         self.GetSuggestions = channel.unary_unary(
                 '/suggestions.SuggestionsService/GetSuggestions',
+                request_serializer=suggestions__pb2.EventRequest.SerializeToString,
+                response_deserializer=suggestions__pb2.EventResponse.FromString,
+                )
+        self.ClearSuggestionsCache = channel.unary_unary(
+                '/suggestions.SuggestionsService/ClearSuggestionsCache',
+                request_serializer=suggestions__pb2.ClearCacheRequest.SerializeToString,
+                response_deserializer=suggestions__pb2.ClearCacheResponse.FromString,
+                )
+        self.GetSuggestionsLegacy = channel.unary_unary(
+                '/suggestions.SuggestionsService/GetSuggestionsLegacy',
                 request_serializer=suggestions__pb2.SuggestionRequest.SerializeToString,
                 response_deserializer=suggestions__pb2.SuggestionResponse.FromString,
                 )
@@ -30,14 +41,36 @@ class SuggestionsServiceStub(object):
 class SuggestionsServiceServicer(object):
     """
     SuggestionsService provides book recommendations based on the provided book name.
-
-    The service consists of a single RPC method:
-    - GetSuggestions: Takes a SuggestionRequest containing a book name and returns a SuggestionResponse
-    with a list of suggested books.
     """
 
+    def InitializeSuggestions(self, request, context):
+        """Initial call to cache data and start the flow for this service
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def GetSuggestions(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """Event f: Get book suggestions
+        Takes EventRequest containing order_id, vector_clock, and book_name
+        Returns EventResponse indicating approval, updated vector_clock, and suggested_books
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ClearSuggestionsCache(self, request, context):
+        """Bonus: Clear cache for a specific order
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetSuggestionsLegacy(self, request, context):
+        """Original GetSuggestions method, kept for potential backward compatibility.
+        Takes SuggestionRequest containing book_name and order_id.
+        Returns SuggestionResponse with suggested books.
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -45,8 +78,23 @@ class SuggestionsServiceServicer(object):
 
 def add_SuggestionsServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
+            'InitializeSuggestions': grpc.unary_unary_rpc_method_handler(
+                    servicer.InitializeSuggestions,
+                    request_deserializer=suggestions__pb2.InitRequest.FromString,
+                    response_serializer=suggestions__pb2.EventResponse.SerializeToString,
+            ),
             'GetSuggestions': grpc.unary_unary_rpc_method_handler(
                     servicer.GetSuggestions,
+                    request_deserializer=suggestions__pb2.EventRequest.FromString,
+                    response_serializer=suggestions__pb2.EventResponse.SerializeToString,
+            ),
+            'ClearSuggestionsCache': grpc.unary_unary_rpc_method_handler(
+                    servicer.ClearSuggestionsCache,
+                    request_deserializer=suggestions__pb2.ClearCacheRequest.FromString,
+                    response_serializer=suggestions__pb2.ClearCacheResponse.SerializeToString,
+            ),
+            'GetSuggestionsLegacy': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetSuggestionsLegacy,
                     request_deserializer=suggestions__pb2.SuggestionRequest.FromString,
                     response_serializer=suggestions__pb2.SuggestionResponse.SerializeToString,
             ),
@@ -60,11 +108,24 @@ def add_SuggestionsServiceServicer_to_server(servicer, server):
 class SuggestionsService(object):
     """
     SuggestionsService provides book recommendations based on the provided book name.
-
-    The service consists of a single RPC method:
-    - GetSuggestions: Takes a SuggestionRequest containing a book name and returns a SuggestionResponse
-    with a list of suggested books.
     """
+
+    @staticmethod
+    def InitializeSuggestions(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/suggestions.SuggestionsService/InitializeSuggestions',
+            suggestions__pb2.InitRequest.SerializeToString,
+            suggestions__pb2.EventResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
     @staticmethod
     def GetSuggestions(request,
@@ -78,6 +139,40 @@ class SuggestionsService(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/suggestions.SuggestionsService/GetSuggestions',
+            suggestions__pb2.EventRequest.SerializeToString,
+            suggestions__pb2.EventResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def ClearSuggestionsCache(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/suggestions.SuggestionsService/ClearSuggestionsCache',
+            suggestions__pb2.ClearCacheRequest.SerializeToString,
+            suggestions__pb2.ClearCacheResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def GetSuggestionsLegacy(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/suggestions.SuggestionsService/GetSuggestionsLegacy',
             suggestions__pb2.SuggestionRequest.SerializeToString,
             suggestions__pb2.SuggestionResponse.FromString,
             options, channel_credentials,
