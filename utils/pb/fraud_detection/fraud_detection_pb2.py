@@ -14,21 +14,37 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15\x66raud_detection.proto\x12\x05\x66raud\")\n\x08UserInfo\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontact\x18\x02 \x01(\t\"E\n\x0e\x43reditCardInfo\x12\x0e\n\x06number\x18\x01 \x01(\t\x12\x16\n\x0e\x65xpirationDate\x18\x02 \x01(\t\x12\x0b\n\x03\x63vv\x18\x03 \x01(\t\"\x9b\x01\n\x0c\x46raudRequest\x12\"\n\tuser_info\x18\x01 \x01(\x0b\x32\x0f.fraud.UserInfo\x12*\n\x0b\x63redit_card\x18\x02 \x01(\x0b\x32\x15.fraud.CreditCardInfo\x12\x16\n\x0etransaction_id\x18\x03 \x01(\t\x12\x11\n\ttimestamp\x18\x04 \x01(\t\x12\x10\n\x08order_id\x18\x05 \x01(\t\"E\n\rFraudResponse\x12\x10\n\x08\x61pproved\x18\x01 \x01(\x08\x12\x12\n\nconfidence\x18\x02 \x01(\x02\x12\x0e\n\x06reason\x18\x03 \x01(\t2\xc6\x01\n\x0c\x46raudService\x12\x38\n\x0b\x44\x65tectFraud\x12\x13.fraud.FraudRequest\x1a\x14.fraud.FraudResponse\x12:\n\rCheckUserData\x12\x13.fraud.FraudRequest\x1a\x14.fraud.FraudResponse\x12@\n\x13\x43heckCreditCardData\x12\x13.fraud.FraudRequest\x1a\x14.fraud.FraudResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15\x66raud_detection.proto\x12\x05\x66raud\"i\n\x0bVectorClock\x12,\n\x05\x63lock\x18\x01 \x03(\x0b\x32\x1d.fraud.VectorClock.ClockEntry\x1a,\n\nClockEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x05:\x02\x38\x01\"J\n\x0c\x45ventRequest\x12\x10\n\x08order_id\x18\x01 \x01(\t\x12(\n\x0cvector_clock\x18\x02 \x01(\x0b\x32\x12.fraud.VectorClock\"\\\n\rEventResponse\x12\x10\n\x08\x61pproved\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\x12(\n\x0cvector_clock\x18\x03 \x01(\x0b\x32\x12.fraud.VectorClock\")\n\x08UserInfo\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontact\x18\x02 \x01(\t\"E\n\x0e\x43reditCardInfo\x12\x0e\n\x06number\x18\x01 \x01(\t\x12\x16\n\x0e\x65xpirationDate\x18\x02 \x01(\t\x12\x0b\n\x03\x63vv\x18\x03 \x01(\t\"\x99\x01\n\x0bInitRequest\x12\x10\n\x08order_id\x18\x01 \x01(\t\x12\"\n\tuser_info\x18\x02 \x01(\x0b\x32\x0f.fraud.UserInfo\x12*\n\x0b\x63redit_card\x18\x03 \x01(\x0b\x32\x15.fraud.CreditCardInfo\x12(\n\x0cvector_clock\x18\x04 \x01(\x0b\x32\x12.fraud.VectorClock\"U\n\x11\x43learCacheRequest\x12\x10\n\x08order_id\x18\x01 \x01(\t\x12.\n\x12\x66inal_vector_clock\x18\x02 \x01(\x0b\x32\x12.fraud.VectorClock\"6\n\x12\x43learCacheResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\"\x9b\x01\n\x0c\x46raudRequest\x12\"\n\tuser_info\x18\x01 \x01(\x0b\x32\x0f.fraud.UserInfo\x12*\n\x0b\x63redit_card\x18\x02 \x01(\x0b\x32\x15.fraud.CreditCardInfo\x12\x16\n\x0etransaction_id\x18\x03 \x01(\t\x12\x11\n\ttimestamp\x18\x04 \x01(\t\x12\x10\n\x08order_id\x18\x05 \x01(\t\"V\n\rFraudResponse\x12\x10\n\x08\x61pproved\x18\x01 \x01(\x08\x12\x12\n\nconfidence\x18\x02 \x01(\x02\x12\x0e\n\x06reason\x18\x03 \x01(\t\x12\x0f\n\x07message\x18\x04 \x01(\t2\xd4\x02\n\x0c\x46raudService\x12\x44\n\x18InitializeFraudDetection\x12\x12.fraud.InitRequest\x1a\x14.fraud.EventResponse\x12:\n\rCheckUserData\x12\x13.fraud.EventRequest\x1a\x14.fraud.EventResponse\x12@\n\x13\x43heckCreditCardData\x12\x13.fraud.EventRequest\x1a\x14.fraud.EventResponse\x12\x46\n\x0f\x43learFraudCache\x12\x18.fraud.ClearCacheRequest\x1a\x19.fraud.ClearCacheResponse\x12\x38\n\x0b\x44\x65tectFraud\x12\x13.fraud.FraudRequest\x1a\x14.fraud.FraudResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'fraud_detection_pb2', _globals)
 if _descriptor._USE_C_DESCRIPTORS == False:
   DESCRIPTOR._options = None
-  _globals['_USERINFO']._serialized_start=32
-  _globals['_USERINFO']._serialized_end=73
-  _globals['_CREDITCARDINFO']._serialized_start=75
-  _globals['_CREDITCARDINFO']._serialized_end=144
-  _globals['_FRAUDREQUEST']._serialized_start=147
-  _globals['_FRAUDREQUEST']._serialized_end=302
-  _globals['_FRAUDRESPONSE']._serialized_start=304
-  _globals['_FRAUDRESPONSE']._serialized_end=373
-  _globals['_FRAUDSERVICE']._serialized_start=376
-  _globals['_FRAUDSERVICE']._serialized_end=574
+  _globals['_VECTORCLOCK_CLOCKENTRY']._options = None
+  _globals['_VECTORCLOCK_CLOCKENTRY']._serialized_options = b'8\001'
+  _globals['_VECTORCLOCK']._serialized_start=32
+  _globals['_VECTORCLOCK']._serialized_end=137
+  _globals['_VECTORCLOCK_CLOCKENTRY']._serialized_start=93
+  _globals['_VECTORCLOCK_CLOCKENTRY']._serialized_end=137
+  _globals['_EVENTREQUEST']._serialized_start=139
+  _globals['_EVENTREQUEST']._serialized_end=213
+  _globals['_EVENTRESPONSE']._serialized_start=215
+  _globals['_EVENTRESPONSE']._serialized_end=307
+  _globals['_USERINFO']._serialized_start=309
+  _globals['_USERINFO']._serialized_end=350
+  _globals['_CREDITCARDINFO']._serialized_start=352
+  _globals['_CREDITCARDINFO']._serialized_end=421
+  _globals['_INITREQUEST']._serialized_start=424
+  _globals['_INITREQUEST']._serialized_end=577
+  _globals['_CLEARCACHEREQUEST']._serialized_start=579
+  _globals['_CLEARCACHEREQUEST']._serialized_end=664
+  _globals['_CLEARCACHERESPONSE']._serialized_start=666
+  _globals['_CLEARCACHERESPONSE']._serialized_end=720
+  _globals['_FRAUDREQUEST']._serialized_start=723
+  _globals['_FRAUDREQUEST']._serialized_end=878
+  _globals['_FRAUDRESPONSE']._serialized_start=880
+  _globals['_FRAUDRESPONSE']._serialized_end=966
+  _globals['_FRAUDSERVICE']._serialized_start=969
+  _globals['_FRAUDSERVICE']._serialized_end=1309
 # @@protoc_insertion_point(module_scope)

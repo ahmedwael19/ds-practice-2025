@@ -75,13 +75,13 @@ class TransactionService(transaction_verification_pb2_grpc.TransactionServiceSer
         - CVV format (3-4 digits)
         """
         # Validate credit card number length
-        number = re.sub(r'\\D', '', credit_card.number)
+        number = re.sub(r'\D', '', credit_card.number)
         if not (13 <= len(number) <= 19):
             return False
 
         # Validate expiration date format (MM/YY or MM/YYYY)
         exp_date = credit_card.expirationDate
-        match = re.match(r'^(0[1-9]|1[0-2])/(\\d{2}|\\d{4})$', exp_date)
+        match = re.match(r'^(0[1-9]|1[0-2])/(\d{2}|\d{4})$', exp_date)
         if not match:
             return False
 
@@ -110,7 +110,7 @@ class TransactionService(transaction_verification_pb2_grpc.TransactionServiceSer
             return False
 
         # Validate CVV (3-4 digits)
-        if not re.match(r'^\\d{3,4}$', credit_card.cvv):
+        if not re.match(r'^\d{3,4}$', credit_card.cvv):
             return False
 
         return True
@@ -139,15 +139,15 @@ class TransactionService(transaction_verification_pb2_grpc.TransactionServiceSer
         """
         Validate credit card format (not content - that's fraud detection's job).
         """
-        if not credit_card.number or not re.match(r'^\\d{16}$', credit_card.number):
+        if not credit_card.number or not re.match(r'^\d{16}$', credit_card.number):
             logger.info("Invalid credit card number format.")
             return False
 
-        if not credit_card.expirationDate or not re.match(r'^(0[1-9]|1[0-2])/(\\d{2}|\\d{4})$', credit_card.expirationDate):
+        if not credit_card.expirationDate or not re.match(r'^(0[1-9]|1[0-2])/(\d{2}|\d{4})$', credit_card.expirationDate):
             logger.info("Invalid credit card expiration date format.")
             return False
 
-        if not credit_card.cvv or not re.match(r'^\\d{3,4}$', credit_card.cvv):
+        if not credit_card.cvv or not re.match(r'^\d{3,4}$', credit_card.cvv):
             logger.info("Invalid credit card CVV format.")
             return False
  

@@ -9,9 +9,7 @@ class FraudServiceStub(object):
     """
     FraudService is responsible for evaluating whether a transaction is fraudulent.
 
-    The service consists of a single RPC method:
-    - DetectFraud: Takes a FraudRequest containing user and credit card details and returns a FraudResponse 
-    indicating whether the transaction is approved or flagged as fraudulent.
+    The service consists of multiple RPC methods for different stages of the fraud check.
     """
 
     def __init__(self, channel):
@@ -20,18 +18,28 @@ class FraudServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.DetectFraud = channel.unary_unary(
-                '/fraud.FraudService/DetectFraud',
-                request_serializer=fraud__detection__pb2.FraudRequest.SerializeToString,
-                response_deserializer=fraud__detection__pb2.FraudResponse.FromString,
+        self.InitializeFraudDetection = channel.unary_unary(
+                '/fraud.FraudService/InitializeFraudDetection',
+                request_serializer=fraud__detection__pb2.InitRequest.SerializeToString,
+                response_deserializer=fraud__detection__pb2.EventResponse.FromString,
                 )
         self.CheckUserData = channel.unary_unary(
                 '/fraud.FraudService/CheckUserData',
-                request_serializer=fraud__detection__pb2.FraudRequest.SerializeToString,
-                response_deserializer=fraud__detection__pb2.FraudResponse.FromString,
+                request_serializer=fraud__detection__pb2.EventRequest.SerializeToString,
+                response_deserializer=fraud__detection__pb2.EventResponse.FromString,
                 )
         self.CheckCreditCardData = channel.unary_unary(
                 '/fraud.FraudService/CheckCreditCardData',
+                request_serializer=fraud__detection__pb2.EventRequest.SerializeToString,
+                response_deserializer=fraud__detection__pb2.EventResponse.FromString,
+                )
+        self.ClearFraudCache = channel.unary_unary(
+                '/fraud.FraudService/ClearFraudCache',
+                request_serializer=fraud__detection__pb2.ClearCacheRequest.SerializeToString,
+                response_deserializer=fraud__detection__pb2.ClearCacheResponse.FromString,
+                )
+        self.DetectFraud = channel.unary_unary(
+                '/fraud.FraudService/DetectFraud',
                 request_serializer=fraud__detection__pb2.FraudRequest.SerializeToString,
                 response_deserializer=fraud__detection__pb2.FraudResponse.FromString,
                 )
@@ -41,26 +49,45 @@ class FraudServiceServicer(object):
     """
     FraudService is responsible for evaluating whether a transaction is fraudulent.
 
-    The service consists of a single RPC method:
-    - DetectFraud: Takes a FraudRequest containing user and credit card details and returns a FraudResponse 
-    indicating whether the transaction is approved or flagged as fraudulent.
+    The service consists of multiple RPC methods for different stages of the fraud check.
     """
 
-    def DetectFraud(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+    def InitializeFraudDetection(self, request, context):
+        """Initial call to cache data and start the flow for this service
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def CheckUserData(self, request, context):
-        """Event d
+        """Event d: Check user data for fraud
+        Takes EventRequest containing order_id and vector_clock
+        Returns EventResponse indicating approval and updated vector_clock
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def CheckCreditCardData(self, request, context):
-        """Event e
+        """Event e: Check credit card data for fraud
+        Takes EventRequest containing order_id and vector_clock
+        Returns EventResponse indicating approval and updated vector_clock
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ClearFraudCache(self, request, context):
+        """Bonus: Clear cache for a specific order
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DetectFraud(self, request, context):
+        """Original DetectFraud method, kept for potential backward compatibility or simpler use cases.
+        Takes FraudRequest containing user and credit card details and returns a FraudResponse
+        indicating whether the transaction is approved or flagged as fraudulent.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -69,18 +96,28 @@ class FraudServiceServicer(object):
 
 def add_FraudServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'DetectFraud': grpc.unary_unary_rpc_method_handler(
-                    servicer.DetectFraud,
-                    request_deserializer=fraud__detection__pb2.FraudRequest.FromString,
-                    response_serializer=fraud__detection__pb2.FraudResponse.SerializeToString,
+            'InitializeFraudDetection': grpc.unary_unary_rpc_method_handler(
+                    servicer.InitializeFraudDetection,
+                    request_deserializer=fraud__detection__pb2.InitRequest.FromString,
+                    response_serializer=fraud__detection__pb2.EventResponse.SerializeToString,
             ),
             'CheckUserData': grpc.unary_unary_rpc_method_handler(
                     servicer.CheckUserData,
-                    request_deserializer=fraud__detection__pb2.FraudRequest.FromString,
-                    response_serializer=fraud__detection__pb2.FraudResponse.SerializeToString,
+                    request_deserializer=fraud__detection__pb2.EventRequest.FromString,
+                    response_serializer=fraud__detection__pb2.EventResponse.SerializeToString,
             ),
             'CheckCreditCardData': grpc.unary_unary_rpc_method_handler(
                     servicer.CheckCreditCardData,
+                    request_deserializer=fraud__detection__pb2.EventRequest.FromString,
+                    response_serializer=fraud__detection__pb2.EventResponse.SerializeToString,
+            ),
+            'ClearFraudCache': grpc.unary_unary_rpc_method_handler(
+                    servicer.ClearFraudCache,
+                    request_deserializer=fraud__detection__pb2.ClearCacheRequest.FromString,
+                    response_serializer=fraud__detection__pb2.ClearCacheResponse.SerializeToString,
+            ),
+            'DetectFraud': grpc.unary_unary_rpc_method_handler(
+                    servicer.DetectFraud,
                     request_deserializer=fraud__detection__pb2.FraudRequest.FromString,
                     response_serializer=fraud__detection__pb2.FraudResponse.SerializeToString,
             ),
@@ -95,13 +132,11 @@ class FraudService(object):
     """
     FraudService is responsible for evaluating whether a transaction is fraudulent.
 
-    The service consists of a single RPC method:
-    - DetectFraud: Takes a FraudRequest containing user and credit card details and returns a FraudResponse 
-    indicating whether the transaction is approved or flagged as fraudulent.
+    The service consists of multiple RPC methods for different stages of the fraud check.
     """
 
     @staticmethod
-    def DetectFraud(request,
+    def InitializeFraudDetection(request,
             target,
             options=(),
             channel_credentials=None,
@@ -111,9 +146,9 @@ class FraudService(object):
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_unary(request, target, '/fraud.FraudService/DetectFraud',
-            fraud__detection__pb2.FraudRequest.SerializeToString,
-            fraud__detection__pb2.FraudResponse.FromString,
+        return grpc.experimental.unary_unary(request, target, '/fraud.FraudService/InitializeFraudDetection',
+            fraud__detection__pb2.InitRequest.SerializeToString,
+            fraud__detection__pb2.EventResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -129,8 +164,8 @@ class FraudService(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/fraud.FraudService/CheckUserData',
-            fraud__detection__pb2.FraudRequest.SerializeToString,
-            fraud__detection__pb2.FraudResponse.FromString,
+            fraud__detection__pb2.EventRequest.SerializeToString,
+            fraud__detection__pb2.EventResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -146,6 +181,40 @@ class FraudService(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/fraud.FraudService/CheckCreditCardData',
+            fraud__detection__pb2.EventRequest.SerializeToString,
+            fraud__detection__pb2.EventResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def ClearFraudCache(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/fraud.FraudService/ClearFraudCache',
+            fraud__detection__pb2.ClearCacheRequest.SerializeToString,
+            fraud__detection__pb2.ClearCacheResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def DetectFraud(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/fraud.FraudService/DetectFraud',
             fraud__detection__pb2.FraudRequest.SerializeToString,
             fraud__detection__pb2.FraudResponse.FromString,
             options, channel_credentials,

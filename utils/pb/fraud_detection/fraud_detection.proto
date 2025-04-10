@@ -2,17 +2,22 @@ syntax = "proto3";  // Specifies that we are using Protocol Buffers version 3.
 
 package fraud;  // Defines the package name to avoid conflicts when importing the generated code.
 
-/*
-  FraudService is responsible for evaluating whether a transaction is fraudulent.
+// Common message for vector clock
+message VectorClock {
+    map<string, int32> clock = 1;
+}
 
-  The service consists of a single RPC method:
-  - DetectFraud: Takes a FraudRequest containing user and credit card details and returns a FraudResponse 
-    indicating whether the transaction is approved or flagged as fraudulent.
-*/
-service FraudService {
-    rpc DetectFraud (FraudRequest) returns (FraudResponse);
-    rpc CheckUserData (FraudRequest) returns (FraudResponse); // Event d
-    rpc CheckCreditCardData (FraudRequest) returns (FraudResponse); // Event e
+// Common message for event requests (used by CheckUserData, CheckCreditCardData)
+message EventRequest {
+    string order_id = 1;
+    VectorClock vector_clock = 2;
+}
+
+// Common message for event responses (used by CheckUserData, CheckCreditCardData, InitializeFraudDetection)
+message EventResponse {
+    bool approved = 1;
+    string message = 2;
+    VectorClock vector_clock = 3;
 }
 
 /*
@@ -41,15 +46,62 @@ message CreditCardInfo {
     string cvv = 3;
 }
 
+// Request for initializing the process and caching data
+message InitRequest {
+    string order_id = 1;
+    UserInfo user_info = 2;
+    CreditCardInfo credit_card = 3;
+    VectorClock vector_clock = 4; // Send initial clock from orchestrator
+}
+
+// Request to clear cache
+message ClearCacheRequest {
+    string order_id = 1;
+    VectorClock final_vector_clock = 2;
+}
+
+message ClearCacheResponse {
+    bool success = 1;
+    string message = 2;
+}
+
 /*
-  FraudRequest is the input message for the DetectFraud RPC.
+  FraudService is responsible for evaluating whether a transaction is fraudulent.
+
+  The service consists of multiple RPC methods for different stages of the fraud check.
+*/
+service FraudService {
+    // Initial call to cache data and start the flow for this service
+    rpc InitializeFraudDetection (InitRequest) returns (EventResponse);
+
+    // Event d: Check user data for fraud
+    // Takes EventRequest containing order_id and vector_clock
+    // Returns EventResponse indicating approval and updated vector_clock
+    rpc CheckUserData (EventRequest) returns (EventResponse);
+
+    // Event e: Check credit card data for fraud
+    // Takes EventRequest containing order_id and vector_clock
+    // Returns EventResponse indicating approval and updated vector_clock
+    rpc CheckCreditCardData (EventRequest) returns (EventResponse);
+
+    // Bonus: Clear cache for a specific order
+    rpc ClearFraudCache (ClearCacheRequest) returns (ClearCacheResponse);
+
+    // Original DetectFraud method
+    // Takes FraudRequest containing user and credit card details and returns a FraudResponse
+    // indicating whether the transaction is approved or flagged as fraudulent.
+    rpc DetectFraud (FraudRequest) returns (FraudResponse);
+}
+
+/*
+  FraudRequest is the input message for the original DetectFraud RPC.
 
   It contains:
   - user_info: User details (name and contact information).
   - credit_card: Credit card details used in the transaction.
-  - transaction_id: Unique identifier for the transaction (for tracking)
-  - order_id: Unique identifier for the order (for vector clock tracking)
-  - timestamp: Time when the transaction occurred
+  - transaction_id: Unique identifier for the transaction (for tracking) - Kept for compatibility
+  - order_id: Unique identifier for the order (for vector clock tracking) - Kept for compatibility
+  - timestamp: Time when the transaction occurred - Kept for compatibility
  */
 message FraudRequest {
     UserInfo user_info = 1;
@@ -60,15 +112,17 @@ message FraudRequest {
 }
 
 /*
-  FraudResponse is the output message returned by DetectFraud.
+  FraudResponse is the output message returned by the original DetectFraud RPC.
 
   Fields:
   - approved: A boolean flag indicating whether the transaction is legitimate (true) or fraudulent (false).
   - confidence: A score from 0.0-1.0 indicating the confidence level of the fraud decision
-  - reason: A message explaining the reason if the transaction is flagged as fraudulent.
+  - reason: A message explaining the reason if the transaction is flagged as fraudulent
+  - message: General status message (consistency with EventResponse)
 */
 message FraudResponse {
     bool approved = 1;
     float confidence = 2;
     string reason = 3;
+    string message = 4;
 }
