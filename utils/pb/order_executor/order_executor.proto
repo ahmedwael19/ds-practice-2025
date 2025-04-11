@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package orderexecutor;
+
+service OrderExecutorService {
+  // Leader election related RPCs
+  rpc RequestVote (VoteRequest) returns (VoteResponse);
+  rpc Heartbeat (HeartbeatRequest) returns (HeartbeatResponse);
+  // For monitoring/status
+  rpc GetExecutorStatus (StatusRequest) returns (StatusResponse);
+}
+
+message VoteRequest {
+  string candidate_id = 1;
+  int32 term = 2;
+  string correlation_id = 3;
+}
+
+message VoteResponse {
+  bool vote_granted = 1;
+  int32 term = 2;
+}
+
+message HeartbeatRequest {
+  string leader_id = 1;
+  int32 term = 2;
+  string correlation_id = 3;
+}
+
+message HeartbeatResponse {
+  bool success = 1;
+  int32 term = 2;
+}
+
+message StatusRequest {
+  string correlation_id = 1;
+}
+
+message StatusResponse {
+  string executor_id = 1;
+  string state = 2;  // "leader", "follower", "candidate"
+  int32 current_term = 3;
+  int32 processed_orders = 4;
+  string leader_id = 5;
+}

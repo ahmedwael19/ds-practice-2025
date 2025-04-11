@@ -2,22 +2,23 @@ syntax = "proto3";
 
 package transaction;
 
-// Common message for vector clock
+// Common message for vector clock - used for maintaining causal relationships
+// between distributed events across the system
 message VectorClock {
-    map<string, int32> clock = 1;
+    map<string, int32> clock = 1;  // Maps service names to logical timestamps
 }
 
-// Common message for event requests
+// Common message for event requests - provides consistent structure for all event calls
 message EventRequest {
-    string order_id = 1;
-    VectorClock vector_clock = 2; // Incoming clock state
+    string order_id = 1;           // Unique identifier for the transaction
+    VectorClock vector_clock = 2;  // Incoming vector clock state for tracking causality
 }
 
-// Common message for event responses
+// Common message for event responses - provides consistent structure for all event responses
 message EventResponse {
-    bool approved = 1;
-    string message = 2;
-    VectorClock vector_clock = 3; // Updated clock state
+    bool approved = 1;             // Whether the event processing was successful
+    string message = 2;            // Human-readable result description or error
+    VectorClock vector_clock = 3;  // Updated vector clock reflecting this operation
 }
 
 /*
@@ -64,29 +65,31 @@ message Address {
 }
 
 // Request for initializing the process and caching data
+// First message sent to services in the event flow
 message InitRequest {
-    string order_id = 1;
-    repeated Item items = 2;
-    CreditCardInfo credit_card = 3;
-    Address billingAddress = 4; // Assuming user data includes address
-    bool termsAndConditionsAccepted = 5;
-    string user_contact = 6; // Added for user data check
-    string user_name = 7; // Added for user data check
-    VectorClock vector_clock = 8; // Send initial clock from orchestrator
+    string order_id = 1;                  // Unique order identifier
+    repeated Item items = 2;              // Products being purchased
+    CreditCardInfo credit_card = 3;       // Payment method details
+    Address billingAddress = 4;           // User's billing address
+    bool termsAndConditionsAccepted = 5;  // Terms acceptance flag
+    string user_contact = 6;              // User contact information
+    string user_name = 7;                 // User name
+    VectorClock vector_clock = 8;         // Initial vector clock state
 }
 
-// Request to clear cache
+// Request to clear cache when an order is complete
 message ClearCacheRequest {
-    string order_id = 1;
-    VectorClock final_vector_clock = 2;
+    string order_id = 1;                  // Order to clear from cache
+    VectorClock final_vector_clock = 2;   // Final state of vector clock
 }
 
+// Response after cache clearing attempt
 message ClearCacheResponse {
-    bool success = 1;
-    string message = 2;
+    bool success = 1;                     // Whether cache was cleared successfully
+    string message = 2;                   // Details about operation
 }
 
-
+// Service definition for transaction verification operations
 service TransactionService {
     // Initial call to cache data and start the flow for this service
     rpc InitializeTransaction (InitRequest) returns (EventResponse);

@@ -1,236 +1,475 @@
-
----
-
-# Project Documentation
+# E-Commerce Checkout System
 
 ## Overview
 This project implements a **microservices-based architecture** using **gRPC** and **Flask** to facilitate transaction validation and book recommendation services. The system consists of multiple services communicating over gRPC, with an **Orchestrator API** acting as a central gateway.
 
-
 ## Services Overview
 
-### 1. **Fraud Detection Service (`fraud_detection`)**
-- Analyzes user and credit card details.
-- Uses both rule-based checks (e.g., card velocity) and advanced AI analysis.
-- Logs every step with a standardized format.
-- Returns a simple approval decision based on high-confidence fraud signals.
+1. **Frontend**
+   - Provides checkout interface for customers
+   - Submits orders to the orchestrator
+   - Displays order status and book recommendations
 
-### 2. **Transaction Verification Service (`transaction_verification`)**
-- Validates transaction details such as item information, credit card format, Luhn algorithm check, and shipping method.
-- Logs validation results concisely.
-- Returns an approval status along with a clear rejection message when needed.
+2. **Orchestrator**
+   - Coordinates the checkout workflow using Flask
+   - Manages vector clocks for causal consistency
+   - Routes events to appropriate services following DAG dependencies
+   - Enqueues approved orders for processing
 
-### 3. **Book Suggestions Service (`suggestions`)**
-- Provides book recommendations based on the user's purchase.
-- Calls OpenAI’s GPT model to generate suggestions and formats them as a JSON array.
-- Uses consistent logging for AI prompt and response handling.
+3. **Transaction Verification**
+   - Validates transaction data integrity
+   - Verifies items and quantities
+   - Checks user data completeness
+   - Validates credit card format and expiration
 
-### 4. **Orchestrator Service (`orchestrator`)**
-- Acts as the API gateway using Flask.
-- Receives checkout requests, generates a unique correlation ID, and concurrently calls the Fraud Detection, Transaction Verification, and Book Suggestions services.
-- Aggregates responses:
-  - If either Fraud Detection or Transaction Verification rejects the order, a clear rejection message is set.
-  - If both approve, the order is approved and book suggestions are included.
-- Always returns a `"suggestedBooks"` key (an empty array if no suggestions) to maintain a consistent API response.
-- Logs each step with a uniform and concise format.
+4. **Fraud Detection**
+   - Evaluates transactions for potential fraud using AI
+   - Performs OpenAI-powered analysis of user data patterns
+   - Implements confidence-based approval system for AI judgments
+   - Checks credit card velocity (frequency of use) to detect suspicious activity
+   - Falls back to rule-based checks when AI is unavailable
 
----
+5. **Suggestions**
+   - Provides personalized book recommendations using AI
+   - Leverages OpenAI to generate contextually relevant book suggestions
+   - Analyzes purchased items to generate relevant recommendations
+   - Implements fallback mechanisms for AI service failures
+
+6. **Order Queue**
+   - Buffers approved orders for processing
+   - Maintains priority-based order queue
+   - Provides queue status information
+   - Ensures orders wait for processing in priority order
+
+7. **Order Executor Cluster**
+   - Three executor instances implementing the Raft Algorithm
+   - Processes orders from the queue when elected as leader
+   - Maintains high availability through redundancy
+
+
+## System Model
+
+### Communication Model
+- **Synchronous gRPC Communication**: Services communicate through synchronous gRPC calls with protocol buffers
+- **Vector Clock Propagation**: All services use vector clocks to track causality between distributed events  
+- **Request Correlation**: Each request is tracked with a unique correlation ID across service boundaries
+- **Service Discovery**: Services locate each other via container names in the Docker network
+
+### Architectural Model
+- **Microservices Architecture**: System composed of independent, specialized services
+- **API Gateway Pattern**: Orchestrator coordinates workflow and manages client interaction
+- **Event-Driven Processing**: System follows a directed acyclic graph (DAG) of events with dependencies
+- **Service-Local State**: Each service maintains its own cache of order data
+- **Docker Containerization**: All components run as containers managed by Docker Compose
+
+### Timing Model
+- **Vector Clocks**: Each service maintains a vector clock to track event causality
+- **Event Dependencies**: Events follow a partial ordering determined by the directed acyclic graph
+- **Clock Synchronization**: Services merge vector clocks during communication
+- **Election Timeouts**: Order executors use randomized timeouts (1.5-3 seconds) for election initiation
+
+### Failure Model
+- **Service Not Found Handling**: System checks for missing data/services and handles errors gracefully
+- **Vector Clock Conflict Detection**: System detects vector clock causality violations
+- **Leader Election**: Order executor cluster implements the Raft Algorithm for leader election
+- **Heartbeat Monitoring**: Leaders send periodic heartbeats (every 500ms) to maintain leadership
+- **Graceful AI Degradation**: System continues processing even if AI services fail or return unexpected results
+
 
 ## Project Structure
 
 ```
-.
-├── README.md
-├── docker-compose.yaml
-├── docs
-│   └── README.md
-├── fraud_detection
+project/
+├── orchestrator/
 │   ├── Dockerfile
-│   ├── requirements.txt
-│   └── src
-│       └── app.py
-├── frontend
+│   └── src/
+│       └── app.py             # API gateway and workflow coordinator
+├── transaction_verification/
 │   ├── Dockerfile
-│   └── src
-│       └── index.html
-├── orchestrator
+│   └── src/
+│       └── app.py             # Transaction validation service
+├── fraud_detection/
 │   ├── Dockerfile
-│   ├── requirements.txt
-│   └── src
-│       └── app.py
-├── suggestions
+│   └── src/
+│       └── app.py             # AI-powered fraud detection service
+├── suggestions/
 │   ├── Dockerfile
-│   ├── requirements.txt
-│   └── src
-│       └── app.py
-├── transaction_verification
+│   └── src/
+│       └── app.py             # AI-powered book recommendations service
+├── order_queue/
 │   ├── Dockerfile
-│   ├── requirements.txt
-│   └── src
-│       └── app.py
-└── utils
-    ├── README.md
-    ├── api
-    │   ├── bookstore.yaml
-    │   ├── fintech.yaml
-    │   └── ridehailing.yaml
-    ├── other
-    │   └── hotreload.py
-    └── pb
-        ├── fraud_detection
-        │   ├── __init__.py
-        │   ├── fraud_detection.proto
-        │   ├── fraud_detection_pb2.py
-        │   ├── fraud_detection_pb2.pyi
-        │   └── fraud_detection_pb2_grpc.py
-        ├── suggestions
-        │   ├── __init__.py
-        │   ├── suggestions.proto
-        │   ├── suggestions_pb2.py
-        │   ├── suggestions_pb2.pyi
-        │   └── suggestions_pb2_grpc.py
-        └── transaction_verification
-            ├── __init__.py
-            ├── transaction_verification.proto
-            ├── transaction_verification_pb2.py
-            ├── transaction_verification_pb2.pyi
-            └── transaction_verification_pb2_grpc.py
+│   └── src/
+│       └── app.py             # Order queue service
+├── order_executor/
+│   ├── Dockerfile
+│   └── src/
+│       └── app.py             # Order executor with Raft Algorithm
+├── frontend/
+│   ├── Dockerfile
+│   └── src/
+│       └── index.html         # Checkout form UI
+├── utils/
+│   └── pb/                    # Protocol buffer definitions
+│       ├── fraud_detection/
+│       │   ├── fraud_detection.proto
+│       │   └── ...
+│       ├── transaction_verification/
+│       │   ├── transaction_verification.proto
+│       │   └── ...
+│       ├── suggestions/
+│       │   ├── suggestions.proto
+│       │   └── ...
+│       ├── order_queue/
+│       │   ├── order_queue.proto
+│       │   └── ...
+│       └── order_executor/
+│           ├── order_executor.proto
+│           └── ...
+├── docker-compose.yaml        # Service orchestration
+└── variables.env              # Environment variables including OpenAI API key
 ```
-
----
 
 ## Service Communication Flow
 
-1. The **Orchestrator Service** receives a **checkout request** via an HTTP POST to `/checkout`.
-2. It generates a unique **correlation ID** and concurrently calls:
-   - **Fraud Detection Service** (to analyze the transaction for potential fraud).
-   - **Transaction Verification Service** (to validate credit card and purchase details).
-   - **Book Suggestions Service** (to generate book recommendations).
-3. Responses are aggregated:
-   - **Rejection:** If either Fraud Detection or Transaction Verification fails, the order is rejected with a clear reason (e.g., "Order Rejected: Fraud detection failed" or a specific transaction verification message).
-   - **Approval:** If both services approve, the order is approved and book suggestions are attached.
-4. The final response is returned to the client in a consistent JSON structure that always includes the `"suggestedBooks"` key.
+1. **Initialization Phase**:
+   - Orchestrator receives HTTP checkout request
+   - Generates unique order ID and correlation ID
+   - Initializes all services in parallel with order data
+   - Each service caches data and responds with updated vector clock
+   - Orchestrator merges vector clocks
 
----
+2. **Event Execution Phase**:
+   - **Events a & b** (parallel): Verify items and user data
+   - **Events c & d** (parallel, after a & b): Verify credit card format and check user data
+   - **Event d** uses AI to analyze user data for fraud patterns
+   - **Event e** (after c & d): Check credit card for fraud with velocity checks
+   - **Event f** (after e): Get AI-generated book suggestions
+   - Each event updates and propagates vector clocks
+
+3. **Order Processing Phase**:
+   - Orchestrator checks if order executor cluster has a leader
+   - Enqueues approved order in order queue
+   - Leader in order executor cluster dequeues and processes order
+
+4. **Cleanup Phase**:
+   - Orchestrator sends final vector clock to all services
+   - Services clear cached order data if vector clock indicates all events are complete
+
+## AI Integration
+
+### Fraud Detection AI
+- **Model**: Uses OpenAI's GPT-4o-mini model
+- **Prompt Engineering**: Structured prompts with clear JSON response formats
+- **Confidence Scoring**: AI provides confidence level with each fraud assessment
+- **Low-Confidence Handling**: Orders with low-confidence fraud indicators are approved but logged
+- **Fallback Mechanism**: System continues with rule-based checks when AI service fails
+
+### Recommendations AI 
+- **Model**: Uses OpenAI's GPT-4o-mini model
+- **Personalization**: Generates book recommendations based on purchased items
+- **JSON Structure**: Returns structured data with book titles, authors, and IDs
+- **Error Handling**: Implements fallback recommendations when AI response parsing fails
 
 ## API Endpoints
+
+### POST /checkout
 
 | Endpoint       | Method | Description |
 |----------------|--------|-------------|
 | `/checkout`    | `POST` | Validates transactions and returns order status with book suggestions if approved |
-
-### Example Checkout Request:
+## Example Checkout Request
 
 ```json
 {
+  "items": [
+    {
+      "name": "Clean Architecture",
+      "quantity": 1
+    }
+  ],
   "user": {
-    "name": "Alice Doe",
-    "contact": "alice@example.com"
+    "name": "John Doe",
+    "contact": "john@example.com"
   },
   "creditCard": {
     "number": "4111111111111111",
-    "expirationDate": "12/24",
+    "expirationDate": "12/2025",
     "cvv": "123"
   },
-  "items": [
-    {
-      "name": "Machine Learning Basics",
-      "quantity": 1
-    }
-  ]
+  "billingAddress": {
+    "street": "123 Main St",
+    "city": "Anytown",
+    "state": "CA",
+    "zip": "12345",
+    "country": "USA"
+  },
+  "shippingMethod": "standard",
+  "giftWrapping": false,
+  "termsAndConditionsAccepted": true
 }
 ```
 
-### Example Response:
-
-If the order is approved:
+## Example Response
 
 ```json
 {
-  "orderId": "12345",
+  "orderId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
   "status": "Order Approved",
+  "message": "Your order has been approved. Order has been queued for processing.",
   "suggestedBooks": [
     {
-      "bookId": "567",
-      "title": "Deep Learning Fundamentals",
-      "author": "Jane Smith"
+      "title": "Domain-Driven Design",
+      "author": "Eric Evans",
+      "category": "Software Engineering"
+    },
+    {
+      "title": "Patterns of Enterprise Application Architecture",
+      "author": "Martin Fowler",
+      "category": "Software Engineering"
+    },
+    {
+      "title": "Clean Code",
+      "author": "Robert C. Martin",
+      "category": "Software Engineering"
     }
-  ]
+  ],
+  "finalVectorClock": {
+    "orchestrator": 1,
+    "transaction_verification": 4,
+    "fraud_detection": 3,
+    "suggestions": 2
+  }
 }
 ```
-
-If the order is rejected (note the empty `"suggestedBooks"` array):
-
-```json
-{
-  "orderId": "12345",
-  "status": "Order Rejected: Fraud detection failed",
-  "suggestedBooks": []
-}
-```
-
----
 
 ## System Diagram
 
 ```mermaid
 sequenceDiagram
-    participant User
+    participant Client
     participant Orchestrator
-    participant FraudDetection
-    participant TransactionVerification
-    participant Suggestions
-    participant OpenAI
+    participant TV as Transaction Verification
+    participant FD as Fraud Detection
+    participant S as Suggestions
+    participant OQ as Order Queue
+    participant OE as Order Executor
 
-    User->>Orchestrator: POST /checkout
-    Note over Orchestrator: Logs "Checkout request received"
-    Orchestrator->>FraudDetection: Validate Transaction (gRPC)
-    Orchestrator->>TransactionVerification: Verify Payment (gRPC)
-    Orchestrator->>Suggestions: Fetch Book Recommendations (gRPC)
+    Client->>Orchestrator: POST /checkout
     
-    FraudDetection->>OpenAI: Request fraud analysis
-    OpenAI-->>FraudDetection: AI analysis result
-    FraudDetection-->>Orchestrator: Fraud check result
+    par Initialize Services
+        Orchestrator->>TV: InitializeTransaction
+        Orchestrator->>FD: InitializeFraudDetection
+        Orchestrator->>S: InitializeSuggestions
+    end
     
-    TransactionVerification-->>Orchestrator: Transaction approval status
-     
-    Suggestions->>OpenAI: Request book recommendations
-    OpenAI-->>Suggestions: Book recommendations
-    Suggestions-->>Orchestrator: Suggested books
+    TV-->>Orchestrator: InitResponse(VC)
+    FD-->>Orchestrator: InitResponse(VC)
+    S-->>Orchestrator: InitResponse(VC)
     
-    Orchestrator-->>User: Order status + suggestions
-    Note over Orchestrator: Logs final aggregated response
-
+    par Events a & b (Parallel)
+        Orchestrator->>TV: VerifyItems (a)
+        Orchestrator->>TV: VerifyUserData (b)
+    end
+    
+    TV-->>Orchestrator: VerifyItems Response(VC)
+    TV-->>Orchestrator: VerifyUserData Response(VC)
+    
+    Note over Orchestrator: Merge clocks from a & b
+    
+    par Events c & d (Parallel, but with dependencies)
+        Orchestrator->>TV: VerifyCreditCardFormat (c) [depends on a]
+        Orchestrator->>FD: CheckUserData (d) [depends on b]
+    end
+    
+    Note over FD: AI-powered fraud analysis
+    TV-->>Orchestrator: VerifyCreditCardFormat Response(VC)
+    FD-->>Orchestrator: CheckUserData Response(VC)
+    
+    Note over Orchestrator: Merge clocks from c & d
+    
+    Orchestrator->>FD: CheckCreditCardData (e) [depends on c & d]
+    FD-->>Orchestrator: CheckCreditCardData Response(VC)
+    
+    Orchestrator->>S: GetSuggestions (f) [depends on e]
+    Note over S: AI-powered book recommendations
+    S-->>Orchestrator: GetSuggestions Response(VC)
+    
+    Note over Orchestrator: Order Approved
+    
+    Orchestrator->>OQ: EnqueueOrder
+    OQ-->>Orchestrator: EnqueueResponse
+    
+    Orchestrator-->>Client: HTTP Response
+    
+    OE->>OQ: DequeueOrder
+    OQ-->>OE: DequeueResponse
+    
+    par Clear Caches
+        Orchestrator->>TV: ClearTransactionCache
+        Orchestrator->>FD: ClearFraudCache
+        Orchestrator->>S: ClearSuggestionsCache
+    end
 ```
 
-### Architecture Diagram
+## Architecture Diagram
+
 ```mermaid
 graph TD;
     User["👤 User"] -->|HTTP Request| Orchestrator[🟢 Orchestrator API :5000];
     
-    Orchestrator -->|gRPC :50051| FraudDetection[🔍 Fraud Detection Service];
     Orchestrator -->|gRPC :50052| TransactionVerification[💳 Transaction Verification Service];
-    Orchestrator -->|gRPC :50053| Suggestions[📚 Book Suggestions Service];
-
-    FraudDetection -->|gRPC| OpenAI[🤖 OpenAI];
-    Suggestions -->|gRPC| OpenAI;
-
-    FraudDetection -->|gRPC Response| Orchestrator;
+    Orchestrator -->|gRPC :50051| FraudDetection[🔍 AI Fraud Detection Service];
+    Orchestrator -->|gRPC :50053| Suggestions[📚 AI Book Suggestions Service];
+    
+    FraudDetection -->|API Call| OpenAI[☁️ OpenAI GPT API];
+    Suggestions -->|API Call| OpenAI;
+    
+    Orchestrator -->|gRPC :50054| OrderQueue[📋 Order Queue Service];
+    OrderQueue -->|gRPC :50055| OrderExecutor1[⚙️ Order Executor 1];
+    OrderQueue -->|gRPC :50055| OrderExecutor2[⚙️ Order Executor 2];
+    OrderQueue -->|gRPC :50055| OrderExecutor3[⚙️ Order Executor 3];
+    
+    OrderExecutor1 -.->|Raft Consensus| OrderExecutor2;
+    OrderExecutor2 -.->|Raft Consensus| OrderExecutor3;
+    OrderExecutor3 -.->|Raft Consensus| OrderExecutor1;
+    
     TransactionVerification -->|gRPC Response| Orchestrator;
+    FraudDetection -->|gRPC Response| Orchestrator;
     Suggestions -->|gRPC Response| Orchestrator;
     
     Orchestrator -->|HTTP Response| User;
-    
-    %% Logging System
-    subgraph Logging ["📝 Logging System"]
-        Logger
-    end
-
-    FraudDetection -->|Logs| Logger;
-    TransactionVerification -->|Logs| Logger;
-    Suggestions -->|Logs| Logger;
-    Orchestrator -->|Logs| Logger;
 ```
+
+
+## Leader Election Diagram
+
+The order executor instances implement the Raft consensus algorithm for leader election:
+
+### Sequence 1: Initial Election
+
+```mermaid
+sequenceDiagram
+    participant E1 as Executor 1
+    participant E2 as Executor 2
+    participant E3 as Executor 3
+    
+    Note over E1,E3: All nodes start as Followers with random election timeouts
+    
+    Note over E2: Timeout expires first (1.8s)
+    
+    E2->>E2: Becomes Candidate
+    E2->>E2: Increments term to 1
+    E2->>E2: Votes for self
+    
+    E2->>E1: RequestVote(term=1)
+    E2->>E3: RequestVote(term=1)
+    
+    E1-->>E2: VoteGranted=true
+    E3-->>E2: VoteGranted=true
+    
+    Note over E2: Received majority (3/3)
+    Note over E2: Becomes Leader for term 1
+    
+    E2->>E1: Heartbeat(term=1)
+    E2->>E3: Heartbeat(term=1)
+    
+    Note over E1: Reset timeout
+    Note over E3: Reset timeout
+```
+
+### Sequence 2: Leader Failure and Re-election
+
+```mermaid
+sequenceDiagram
+    participant E1 as Executor 1
+    participant E2 as Executor 2
+    participant E3 as Executor 3
+    
+    Note over E2: Leader for term 1
+    
+    E2->>E1: Heartbeat(term=1)
+    E2->>E3: Heartbeat(term=1)
+    
+    Note over E1: Reset timeout
+    Note over E3: Reset timeout
+    
+    Note over E2: Leader crashes!
+    
+    Note over E1,E3: No heartbeats received
+    
+    Note over E3: Timeout expires first (2.1s)
+    
+    E3->>E3: Becomes Candidate
+    E3->>E3: Increments term to 2
+    E3->>E3: Votes for self
+    
+    E3->>E1: RequestVote(term=2)
+    E3-xE2: RequestVote(term=2)
+    
+    E1-->>E3: VoteGranted=true
+    
+    Note over E3: Received majority (2/3)
+    Note over E3: Becomes Leader for term 2
+    
+    E3->>E1: Heartbeat(term=2)
+    
+    Note over E1: Reset timeout
+```
+
+### Sequence 3: Network Partition and Recovery
+
+```mermaid
+sequenceDiagram
+    participant E1 as Executor 1
+    participant E2 as Executor 2 (Restarted)
+    participant E3 as Executor 3
+    
+    Note over E3: Leader for term 2
+    
+    E3->>E1: Heartbeat(term=2)
+    E3->>E2: Heartbeat(term=2)
+    
+    Note over E1,E2: Reset timeout
+    
+    Note over E1,E3: Network partition!
+    
+    Note over E1: Timeout expires
+    E1->>E1: Becomes Candidate
+    E1->>E1: Increments term to 3
+    E1->>E1: Votes for self
+    
+    E1-xE3: RequestVote(term=3)
+    E1->>E2: RequestVote(term=3)
+    
+    E2-->>E1: VoteGranted=true
+    
+    Note over E1: Received majority in partition (2/3)
+    Note over E1: Becomes Leader for term 3
+    
+    E1->>E2: Heartbeat(term=3)
+    
+    Note over E1,E3: Partition heals
+    
+    E1->>E3: Heartbeat(term=3)
+    
+    Note over E3: Discovers higher term
+    Note over E3: Steps down, becomes Follower
+    
+    E3-->>E1: Accept Heartbeat(term=3)
+    
+    Note over E1: Remains Leader for term 3
+    Note over E1: Now serving all nodes
+```
+
+The Raft leader election algorithm ensures:
+1. Only one leader exists in a given term
+2. Leaders maintain authority through regular heartbeats
+3. Nodes step down when discovering higher terms
+4. The system recovers automatically after failures
+5. Only the leader processes orders from the queue
+6. Split votes are resolved through randomized timeouts
+7. Network partitions are handled when healed
+
 ---
 
 ## Project Contributors

@@ -6,7 +6,7 @@ It performs comprehensive validation on transaction data, including items, shipp
 discount codes, and ensures all required transaction information is present and valid.
 
 Author: Ahmed Soliman, Buraq Khan
-Date: 2025-03-07
+Date: 2025-04-10
 """
 
 import os
@@ -32,12 +32,18 @@ import transaction_verification_pb2_grpc
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("transaction_verification")
+# In-memory cache for order data to avoid redundant validation between calls
 
 ORDER_DATA_CACHE = {}
+
+# Service identifier for vector clock operations
 SERVICE_NAME = "transaction_verification"
 
 def merge_clocks(local_clock, received_clock):
-    """Merges two vector clocks, taking the maximum value for each entry."""
+    """
+    Merges two vector clocks by taking the maximum value for each service entry.
+    This ensures proper causality tracking in the distributed system.
+    """
     merged = local_clock.copy()
     for service, time in received_clock.items():
         merged[service] = max(merged.get(service, 0), time)
@@ -46,12 +52,19 @@ def merge_clocks(local_clock, received_clock):
 class TransactionService(transaction_verification_pb2_grpc.TransactionServiceServicer):
     """
     gRPC Service for transaction verification.
-    It validates transaction data, ensuring all required fields are present and correctly formatted.
+    Implements the TransactionService interface defined in the protocol buffer.
+    Provides methods for validating different aspects of transaction data.
     """
 
     def _validate_items(self, items):
         """
-        Validate that the items list contains valid items.
+        Validates that the items list contains valid items with proper names and quantities.
+        
+        Args:
+            items: List of transaction_verification_pb2.Item objects
+            
+        Returns:
+            bool: True if all items are valid, False otherwise
         """
         if not items:
             logger.info("No items provided in transaction.")
@@ -69,10 +82,16 @@ class TransactionService(transaction_verification_pb2_grpc.TransactionServiceSer
 
     def _validate_cc_format(self, credit_card):
         """
-        Validate basic credit card format including:
+        Performs comprehensive credit card format validation including:
         - Number length (13-19 digits)
         - Expiration date format (MM/YY or MM/YYYY) and not expired
         - CVV format (3-4 digits)
+        
+        Args:
+            credit_card: CreditCardInfo proto object
+            
+        Returns:
+            bool: True if credit card format is valid, False otherwise
         """
         # Validate credit card number length
         number = re.sub(r'\D', '', credit_card.number)
@@ -117,7 +136,16 @@ class TransactionService(transaction_verification_pb2_grpc.TransactionServiceSer
 
     def _validate_luhn(self, card_number):
         """
-        Validate credit card number using the Luhn algorithm.
+        Performs comprehensive credit card format validation including:
+        - Number length (13-19 digits)
+        - Expiration date format (MM/YY or MM/YYYY) and not expired
+        - CVV format (3-4 digits)
+        
+        Args:
+            credit_card: CreditCardInfo proto object
+            
+        Returns:
+            bool: True if credit card format is valid, False otherwise
         """
         digits = [int(d) for d in card_number if d.isdigit()]
         for i in range(len(digits) - 2, -1, -2):
@@ -128,7 +156,11 @@ class TransactionService(transaction_verification_pb2_grpc.TransactionServiceSer
 
     def _initialize_vector_clock(self):
         """
-        Initialize vector clock for the service
+        Initializes a new vector clock for this service with zero values.
+        Includes all services that participate in the distributed transaction.
+        
+        Returns:
+            dict: A dictionary mapping service names to their logical timestamps
         """
         return {
             "transaction_verification": 0,
@@ -137,7 +169,14 @@ class TransactionService(transaction_verification_pb2_grpc.TransactionServiceSer
 
     def _validate_credit_card_format(self, credit_card):
         """
-        Validate credit card format (not content - that's fraud detection's job).
+        Validates credit card format but not the actual content (which is fraud detection's job).
+        Checks number format, expiration date format, and CVV format.
+        
+        Args:
+            credit_card: CreditCardInfo proto object
+            
+        Returns:
+            bool: True if credit card format is valid, False otherwise
         """
         if not credit_card.number or not re.match(r'^\d{16}$', credit_card.number):
             logger.info("Invalid credit card number format.")
@@ -156,6 +195,14 @@ class TransactionService(transaction_verification_pb2_grpc.TransactionServiceSer
     def VerifyItems(self, request, context):
         """
         Handles gRPC requests for verifying items.
+        This is a legacy method kept for backward compatibility.
+        
+        Args:
+            request: The TransactionRequest containing items to verify
+            context: The gRPC context
+            
+        Returns:
+            TransactionResponse: Contains approval status and message
         """
         correlation_id = next((value for key, value in context.invocation_metadata()
                                   if key == "correlation-id"), "N/A")
@@ -182,6 +229,14 @@ class TransactionService(transaction_verification_pb2_grpc.TransactionServiceSer
     def VerifyUserData(self, request, context):
         """
         Handles gRPC requests for verifying user data.
+        This is a legacy method kept for backward compatibility.
+        
+        Args:
+            request: The TransactionRequest containing user data to verify
+            context: The gRPC context
+            
+        Returns:
+            TransactionResponse: Contains approval status and message
         """
         correlation_id = next((value for key, value in context.invocation_metadata()
                                  if key == "correlation-id"), "N/A")
@@ -202,8 +257,15 @@ class TransactionService(transaction_verification_pb2_grpc.TransactionServiceSer
 
     def InitializeTransaction(self, request, context):
         """
-        Handles gRPC requests for initializing transaction data and caching it.
-        This is the first call in the new event-driven flow.
+        Initializes transaction data and caches it for subsequent event calls.
+        This is the first method called in the event-driven flow.
+        
+        Args:
+            request: InitRequest containing order details and initial vector clock
+            context: The gRPC context
+            
+        Returns:
+            EventResponse: Contains approval status, message, and updated vector clock
         """
         correlation_id = next((value for key, value in context.invocation_metadata()
                                  if key == "correlation-id"), "N/A")
@@ -248,7 +310,15 @@ class TransactionService(transaction_verification_pb2_grpc.TransactionServiceSer
         
     def VerifyItems(self, request, context):
         """
-        Handles gRPC requests for verifying items (Event a).
+        Handles verification of items in the transaction (Event a).
+        Ensures items exist and have valid quantities.
+        
+        Args:
+            request: EventRequest containing order_id and vector clock
+            context: The gRPC context
+            
+        Returns:
+            EventResponse: Contains approval status, message, and updated vector clock
         """
         correlation_id = next((value for key, value in context.invocation_metadata()
                                  if key == "correlation-id"), "N/A")
@@ -300,7 +370,15 @@ class TransactionService(transaction_verification_pb2_grpc.TransactionServiceSer
         
     def VerifyUserData(self, request, context):
         """
-        Handles gRPC requests for verifying user data (Event b).
+        Handles verification of user data (Event b).
+        Ensures required user fields are present.
+        
+        Args:
+            request: EventRequest containing order_id and vector clock
+            context: The gRPC context
+            
+        Returns:
+            EventResponse: Contains approval status, message, and updated vector clock
         """
         correlation_id = next((value for key, value in context.invocation_metadata()
                                  if key == "correlation-id"), "N/A")
@@ -354,7 +432,15 @@ class TransactionService(transaction_verification_pb2_grpc.TransactionServiceSer
         
     def VerifyCreditCardFormat(self, request, context):
         """
-        Handles gRPC requests for verifying credit card format (Event c).
+        Handles verification of credit card format (Event c).
+        Checks if credit card number, expiration date, and CVV have valid formats.
+        
+        Args:
+            request: EventRequest containing order_id and vector clock
+            context: The gRPC context
+            
+        Returns:
+            EventResponse: Contains approval status, message, and updated vector clock
         """
         correlation_id = next((value for key, value in context.invocation_metadata()
                                  if key == "correlation-id"), "N/A")
@@ -406,7 +492,15 @@ class TransactionService(transaction_verification_pb2_grpc.TransactionServiceSer
         
     def ClearTransactionCache(self, request, context):
         """
-        Handles gRPC requests for clearing cached transaction data.
+        Clears cached transaction data for a completed order.
+        Ensures vector clock causality is maintained before removing data.
+        
+        Args:
+            request: ClearCacheRequest containing order_id and final vector clock
+            context: The gRPC context
+            
+        Returns:
+            ClearCacheResponse: Contains success status and message
         """
         correlation_id = next((value for key, value in context.invocation_metadata()
                                  if key == "correlation-id"), "N/A")
@@ -449,8 +543,15 @@ class TransactionService(transaction_verification_pb2_grpc.TransactionServiceSer
     
     def VerifyTransaction(self, request, context):
         """
-        Handles gRPC requests for transaction verification.
-        This is the original method, kept for backward compatibility.
+        Legacy method for transaction verification.
+        Kept for backward compatibility but new event-based methods are preferred.
+        
+        Args:
+            request: TransactionRequest containing all transaction data
+            context: The gRPC context
+            
+        Returns:
+            TransactionResponse: Contains approval status and message
         """
         correlation_id = next((value for key, value in context.invocation_metadata()
                                   if key == "correlation-id"), "N/A")
@@ -486,7 +587,8 @@ class TransactionService(transaction_verification_pb2_grpc.TransactionServiceSer
 
 def serve():
     """
-    Starts the gRPC server and listens for incoming transaction verification requests.
+    Starts the gRPC server and listens for transaction verification requests.
+    Uses ThreadPoolExecutor to handle concurrent requests.
     """
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     transaction_verification_pb2_grpc.add_TransactionServiceServicer_to_server(TransactionService(), server)

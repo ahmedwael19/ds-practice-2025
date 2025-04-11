@@ -1,0 +1,92 @@
+syntax = "proto3";
+
+package orderqueue;
+
+// Service definition for order queue operations
+// Handles enqueuing orders, dequeuing for processing, and checking queue status
+service OrderQueueService {
+  // Adds a new order to the processing queue
+  rpc EnqueueOrder (EnqueueRequest) returns (EnqueueResponse);
+  
+  // Retrieves the next order for processing
+  // Called by order executor instances
+  rpc DequeueOrder (DequeueRequest) returns (DequeueResponse);
+  
+  // Gets current queue status (size, pending orders)
+  // Used by monitoring and leader election systems
+  rpc GetQueueStatus (QueueStatusRequest) returns (QueueStatusResponse);
+}
+
+// Item represents a product in an order
+message Item {
+  string name = 1;     // Product name
+  int32 quantity = 2;  // Number of units ordered
+}
+
+// CreditCardInfo contains payment method details
+message CreditCardInfo {
+  string number = 1;          // Credit card number
+  string expirationDate = 2;  // Expiration date (MM/YY or MM/YYYY)
+  string cvv = 3;             // Security code
+}
+
+// Address contains shipping or billing location information
+message Address {
+  string street = 1;   // Street address
+  string city = 2;     // City name
+  string state = 3;    // State/province
+  string zip = 4;      // ZIP/postal code
+  string country = 5;  // Country name
+}
+
+// OrderData contains all details about an approved order
+message OrderData {
+  repeated Item items = 1;              // Products being purchased
+  string user_name = 2;                 // Customer name
+  string user_contact = 3;              // Contact information (email/phone)
+  CreditCardInfo credit_card = 4;       // Payment method details
+  Address billing_address = 5;          // Billing address
+  string shipping_method = 6;           // Delivery method (standard/express)
+  bool gift_wrapping = 7;               // Whether gift wrapping was requested
+  bool terms_and_conditions_accepted = 8; // Terms acceptance flag
+  string user_comment = 9;              // Additional order notes
+}
+
+// EnqueueRequest is sent by the orchestrator to add an order to the queue
+message EnqueueRequest {
+  string order_id = 1;                 // Unique order identifier
+  OrderData order_data = 2;            // Complete order information
+  map<string, int32> vector_clock = 3; // Vector clock for maintaining causality
+}
+
+// EnqueueResponse confirms whether the order was successfully queued
+message EnqueueResponse {
+  bool success = 1;    // Whether the enqueue operation succeeded
+  string message = 2;  // Additional information or error details
+}
+
+// DequeueRequest is sent by order executors to retrieve the next order
+message DequeueRequest {
+  string executor_id = 1; // Identifier of the requesting executor
+                          // Typically only the leader will dequeue
+}
+
+// DequeueResponse contains the next order to be processed
+message DequeueResponse {
+  bool success = 1;                     // Whether an order was retrieved
+  string message = 2;                   // Additional information or error details
+  string order_id = 3;                  // Order identifier (if successful)
+  OrderData order_data = 4;             // Order details (if successful)
+  map<string, int32> vector_clock = 5;  // Vector clock state of the order
+}
+
+// QueueStatusRequest is sent to check the current queue state
+message QueueStatusRequest {
+  string executor_id = 1; // Identifier of the requesting executor
+}
+
+// QueueStatusResponse provides information about the queue
+message QueueStatusResponse {
+  bool has_pending_orders = 1; // Whether there are orders waiting for processing
+  int32 queue_size = 2;        // Number of orders in the queue
+}

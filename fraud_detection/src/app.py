@@ -5,7 +5,7 @@ This module implements a gRPC service that evaluates transactions for potential 
 It integrates with OpenAI's GPT model and uses additional rules to determine whether a transaction is fraudulent.
 
 Author: Ahmed Soliman, Buraq Khan
-Date: 2025-03-07
+Date: 2025-04-10
 """
 
 import os
@@ -33,18 +33,11 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("fraud_detection")
 
-SERVICE_NAME = "fraud_detection"
-
-def merge_clocks(local_clock, received_clock):
-    """Merges two vector clocks, taking the maximum value for each entry."""
-    merged = copy.deepcopy(local_clock)
-    for service, time in received_clock.items():
-        merged[service] = max(merged.get(service, 0), time)
-    return merged
-
 # Initialize OpenAI API key from environment
 openai.api_key = os.getenv("OPENAI_API_KEY")
-
+if not openai.api_key:
+    # log warning
+    logger.warning("OpenAI API key not set. Please set the OPENAI_API_KEY environment variable.")
 # Cache for tracking repeated fraud attempts (simple in-memory implementation)
 FRAUD_ATTEMPT_CACHE = {}
 # Maximum number of attempts within timeframe
@@ -54,14 +47,43 @@ ATTEMPT_TIMEFRAME = 3600
 
 ORDER_DATA_CACHE = {}
 
+SERVICE_NAME = "fraud_detection"
+
+def merge_clocks(local_clock, received_clock):
+    """
+    Merges two vector clocks by taking the maximum value for each service entry.
+    Ensures proper causality tracking in the distributed system.
+    
+    Args:
+        local_clock: Dictionary with current local vector clock
+        received_clock: Dictionary with received vector clock
+        
+    Returns:
+        Dictionary with merged vector clock
+    """
+    merged = copy.deepcopy(local_clock)
+    for service, time in received_clock.items():
+        merged[service] = max(merged.get(service, 0), time)
+    return merged
+
+
 class FraudService(fraud_detection_grpc.FraudServiceServicer):
     """
     gRPC Service that evaluates transaction data and determines if a transaction is fraudulent.
+    Implements the FraudService interface defined in the fraud_detection.proto file.
     """
 
     def _check_card_velocity(self, card_number, correlation_id):
         """
         Check if there have been too many attempts with this card in a time period.
+        This helps detect rapid succession of transactions which may indicate fraud.
+        
+        Args:
+            card_number: The credit card number to check
+            correlation_id: The request correlation ID for logging
+            
+        Returns:
+            bool: True if the velocity is acceptable, False if too many attempts
         """
         # Hash the card number for privacy
         card_hash = hashlib.sha256(card_number.encode()).hexdigest()
@@ -89,6 +111,13 @@ class FraudService(fraud_detection_grpc.FraudServiceServicer):
     def _check_cc_format(self, credit_card):
         """
         Basic validation of credit card format.
+        This is a secondary check to ensure the credit card data follows expected patterns.
+        
+        Args:
+            credit_card: CreditCardInfo proto object
+            
+        Returns:
+            bool: True if credit card format is valid, False otherwise
         """
         # Check number length (most cards are between 13-19 digits)
         number = re.sub(r'\D', '', credit_card.number)
@@ -107,7 +136,11 @@ class FraudService(fraud_detection_grpc.FraudServiceServicer):
 
     def _initialize_vector_clock(self):
         """
-        Initialize vector clock for the service
+        Initialize vector clock for the service with zero values.
+        Includes all services that participate in the distributed transaction.
+        
+        Returns:
+            dict: A dictionary mapping service names to their logical timestamps
         """
         return {
             "transaction_verification": 0,
@@ -118,6 +151,14 @@ class FraudService(fraud_detection_grpc.FraudServiceServicer):
     def InitializeFraudDetection(self, request, context):
         """
         Handles gRPC requests for initializing fraud detection data and caching it.
+        This is the first method called in the event-driven flow for the fraud service.
+        
+        Args:
+            request: InitRequest containing order details and initial vector clock
+            context: The gRPC context
+            
+        Returns:
+            EventResponse: Contains approval status, message, and updated vector clock
         """
         correlation_id = next((value for key, value in context.invocation_metadata()
                                  if key == "correlation-id"), "N/A")
@@ -150,6 +191,8 @@ class FraudService(fraud_detection_grpc.FraudServiceServicer):
         response = fraud_detection.EventResponse()
         response.approved = True
         response.message = "Fraud detection data initialized successfully"
+        
+        # Convert Python dict to protobuf map
         for service, time in current_clock.items():
             response.vector_clock.clock[service] = time
 
@@ -157,8 +200,15 @@ class FraudService(fraud_detection_grpc.FraudServiceServicer):
 
     def CheckUserData(self, request, context):
         """
-        Handles gRPC requests for checking user data for fraud (Event d).
-        Uses EventRequest and EventResponse.
+        Handles verification of user data for fraud indicators (Event d).
+        Checks if user data shows suspicious patterns.
+        
+        Args:
+            request: EventRequest containing order_id and vector clock
+            context: The gRPC context
+            
+        Returns:
+            EventResponse: Contains approval status, message, and updated vector clock
         """
         correlation_id = next((value for key, value in context.invocation_metadata()
                                  if key == "correlation-id"), "N/A")
@@ -187,17 +237,83 @@ class FraudService(fraud_detection_grpc.FraudServiceServicer):
 
         logger.info(f"[{correlation_id}] [Fraud] Vector clock for {order_id}: {current_clock}")
 
-        # Perform the actual check (simplified for now)
+        # Perform the actual check using cached data
+        credit_card = ORDER_DATA_CACHE[order_id]["credit_card"]
+        user_info = ORDER_DATA_CACHE[order_id]["user_info"] # Needed for AI prompt
+        logging.info(f"CRIEDT CARD: {credit_card.number} {credit_card.expirationDate} {credit_card.cvv}")
+        # Create response with updated vector clock
+        response = fraud_detection.EventResponse()
+        try:
+            # Step 1: Send all data to AI for advanced pattern detection
+            masked_cc = f"{'*' * (len(credit_card.number) - 4)}{credit_card.number[-4:]}"
+            logger.info(f"[{correlation_id}] [Fraud] Initial checks passed; initiating AI analysis for card ending in {credit_card.number[-4:]}")
+            prompt = (
+                f"As a fraud detection system, analyze this transaction for possible fraud indicators:\n\n"
+                f"User: {user_info.name}\n"
+                f"Contact: {user_info.contact}\n"
+                f"Credit Card: Last 4 digits {credit_card.number[-4:]}\n"
+                f"Card Expiration: {credit_card.expirationDate}\n\n"
+                f"Common fraud indicators include:\n"
+                f"- Mismatched names/emails\n"
+                f"- Suspicious email patterns\n"
+                f"- Unusual character patterns\n"
+                f"- Geographic inconsistencies\n\n"
+                "Please respond with JSON in the following format (use valid JSON booleans and numbers):\n"
+                "{\n"
+                '  "approved": true,  // or false\n'
+                '  "confidence": 0.95,  // a number between 0 and 1\n'
+                '  "reason": "Explanation if rejected, otherwise empty string"\n'
+                "}"
+            )
+
+            ai_response = openai.ChatCompletion.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a fraud detection AI specialized in identifying transaction fraud patterns."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,  # Lower temperature for consistent responses
+                max_tokens=100,
+                response_format={"type": "json_object"}
+            )
+            ai_message = ai_response.choices[0].message.content.strip()
+
+            try:
+                result_json = json.loads(ai_message)
+                is_approved = result_json.get("approved", False)
+                confidence = result_json.get("confidence", 0.0)
+                reason = result_json.get("reason", "")
+
+                if not is_approved and confidence > 0.7:
+                    logger.info(f"[{correlation_id}] [Fraud] Transaction rejected by AI (confidence {confidence}): {reason}")
+
+                if not is_approved and confidence <= 0.7:
+                    logger.info(f"[{correlation_id}] [Fraud] AI flagged issues (low confidence {confidence}): {reason}")
+                    is_approved = True  # Potentially still approve but log the warning
+
+            except json.JSONDecodeError:
+                logger.error(f"[{correlation_id}] [Fraud] Failed to parse AI response: {ai_message}")
+                response.approved = is_approved
+                response.message = "AI response parsing error"
+                for service, time in current_clock.items():
+                    response.vector_clock.clock[service] = time 
+                return response
+        except Exception as e:
+            logger.exception(f"[{correlation_id}] [Fraud] Exception during user data check: {str(e)}")
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details("Internal error in fraud detection service during user data check")
+            is_approved = False
+            message = f"Internal error: {str(e)}"
+            response.approved = is_approved
+            response.message = message
+            for service, time in current_clock.items():
+                response.vector_clock.clock[service] = time
+            return response
+        message = reason
         user_info = ORDER_DATA_CACHE[order_id]["user_info"]
-        is_approved = True # Replace with actual user data fraud check logic if needed
-        message = "User data check completed successfully."
-        if not is_approved:
-            message = "User data check failed."
 
         logger.info(f"[{correlation_id}] [Fraud] User data check for {user_info.name} completed. Approved: {is_approved}")
 
-        # Create response with updated vector clock
-        response = fraud_detection.EventResponse()
         response.approved = is_approved
         response.message = message
         for service, time in current_clock.items():
@@ -240,85 +356,30 @@ class FraudService(fraud_detection_grpc.FraudServiceServicer):
         # Perform the actual check using cached data
         credit_card = ORDER_DATA_CACHE[order_id]["credit_card"]
         user_info = ORDER_DATA_CACHE[order_id]["user_info"] # Needed for AI prompt
-        is_approved = True
-        ai_reason = ""
 
-        # try:
-        #     # Step 1: Check velocity/frequency of card usage
-        #     if not self._check_card_velocity(credit_card.number, correlation_id):
-        #         logger.warning(f"[{correlation_id}] [Fraud] Card velocity check failed")
-        #         is_approved = False
-        #         message = "Card velocity check failed"
-        #     else:
-        #         # Step 2: Send to AI for advanced pattern detection
-        #         masked_cc = f"{'*' * (len(credit_card.number) - 4)}{credit_card.number[-4:]}"
-        #         logger.info(f"[{correlation_id}] [Fraud] Initial checks passed; initiating AI analysis for card ending in {credit_card.number[-4:]}")
-
-        #         prompt = (
-        #             f"As a fraud detection system, analyze this transaction for possible fraud indicators:\n\n"
-        #             f"User: {user_info.name}\n"
-        #             f"Contact: {user_info.contact}\n"
-        #             f"Credit Card: Last 4 digits {credit_card.number[-4:]}\n"
-        #             f"Card Expiration: {credit_card.expirationDate}\n\n"
-        #             f"Common fraud indicators include:\n"
-        #             f"- Mismatched names/emails\n"
-        #             f"- Suspicious email patterns\n"
-        #             f"- Unusual character patterns\n"
-        #             f"- Geographic inconsistencies\n\n"
-        #             "Please respond with JSON in the following format (use valid JSON booleans and numbers):\n"
-        #             "{\n"
-        #             '  "approved": true,  // or false\n'
-        #             '  "confidence": 0.95,  // a number between 0 and 1\n'
-        #             '  "reason": "Explanation if rejected, otherwise empty string"\n'
-        #             "}"
-        #         )
-
-        #         ai_response = openai.ChatCompletion.create(
-        #             model="gpt-4o-mini",
-        #             messages=[
-        #                 {"role": "system", "content": "You are a fraud detection AI specialized in identifying transaction fraud patterns."},
-        #                 {"role": "user", "content": prompt}
-        #             ],
-        #             temperature=0.1,
-        #             max_tokens=100,
-        #             response_format={"type": "json_object"}
-        #         )
-        #         ai_message = ai_response.choices[0].message.content.strip()
-
-        #         try:
-        #             result_json = json.loads(ai_message)
-        #             ai_approval = result_json.get("approved", False)
-        #             confidence = result_json.get("confidence", 0.0)
-        #             ai_reason = result_json.get("reason", "")
-
-        #             if not ai_approval and confidence > 0.7:
-        #                 logger.info(f"[{correlation_id}] [Fraud] Transaction rejected by AI (confidence {confidence}): {ai_reason}")
-        #                 is_approved = False
-        #                 message = f"AI rejected transaction: {ai_reason}"
-        #             elif not ai_approval and confidence <= 0.7:
-        #                 logger.info(f"[{correlation_id}] [Fraud] AI flagged issues (low confidence {confidence}): {ai_reason}")
-        #                 # Potentially still approve but log the warning
-        #                 message = f"AI flagged potential issues (low confidence): {ai_reason}"
-        #             else:
-        #                  message = "Credit card data check completed successfully."
-
-        #         except json.JSONDecodeError:
-        #             logger.error(f"[{correlation_id}] [Fraud] Failed to parse AI response: {ai_message}")
-        #             is_approved = False
-        #             message = "Failed to parse AI response"
-
-        # except Exception as e:
-        #     logger.exception(f"[{correlation_id}] [Fraud] Exception during credit card check: {str(e)}")
-        #     context.set_code(grpc.StatusCode.INTERNAL)
-        #     context.set_details("Internal error in fraud detection service during credit card check")
-        #     is_approved = False
-        #     message = f"Internal error: {str(e)}"
-
-        logger.info(f"[{correlation_id}] [Fraud] Credit card data check completed. Approved: {is_approved}")
-        message = "Credit card data check completed successfully."
-        # Create response with updated vector clock
         response = fraud_detection.EventResponse()
-        response.approved = is_approved
+        try:
+            # Step 1: Check velocity/frequency of card usage
+            if not self._check_card_velocity(credit_card.number, correlation_id):
+                logger.warning(f"[{correlation_id}] [Fraud] Card velocity check failed")
+                response.approved = False
+                response.message = "Card velocity check failed"
+                for service, time in current_clock.items():
+                    response.vector_clock.clock[service] = time
+                return response
+        except Exception as e:
+            logger.exception(f"[{correlation_id}] [Fraud] Exception during card velocity check: {str(e)}")
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details("Internal error in fraud detection service during card velocity check")
+            response.approved = False
+            response.message = f"Internal error: {str(e)}"
+            for service, time in current_clock.items():
+                response.vector_clock.clock[service] = time
+            return response
+
+        response.approved = True
+        logger.info(f"[{correlation_id}] [Fraud] Credit card data check completed. Approved: {response.approved}")
+        message = "Credit card data check completed successfully."
         response.message = message
         for service, time in current_clock.items():
             response.vector_clock.clock[service] = time
@@ -327,7 +388,15 @@ class FraudService(fraud_detection_grpc.FraudServiceServicer):
 
     def ClearFraudCache(self, request, context):
         """
-        Handles gRPC requests for clearing cached fraud data.
+        Clears cached fraud detection data for a completed order.
+        Ensures vector clock causality is maintained before removing data.
+        
+        Args:
+            request: ClearCacheRequest containing order_id and final vector clock
+            context: The gRPC context
+            
+        Returns:
+            ClearCacheResponse: Contains success status and message
         """
         correlation_id = next((value for key, value in context.invocation_metadata()
                                  if key == "correlation-id"), "N/A")
@@ -341,7 +410,7 @@ class FraudService(fraud_detection_grpc.FraudServiceServicer):
             response.message = f"Order ID {order_id} not found in cache"
             return response
 
-        # Check if our vector clock is <= the final vector clock
+        # Check if our vector clock is <= the final vector clock before clearing
         final_clock = {k: v for k, v in request.final_vector_clock.clock.items()}
         local_clock = ORDER_DATA_CACHE[order_id]["vector_clock"]
 
@@ -355,13 +424,13 @@ class FraudService(fraud_detection_grpc.FraudServiceServicer):
         response = fraud_detection.ClearCacheResponse()
 
         if is_safe_to_clear:
-            # Safe to clear the cache
+            # Safe to clear the cache - all events are captured in the final clock
             del ORDER_DATA_CACHE[order_id]
             response.success = True
             response.message = f"Order ID {order_id} cleared from fraud cache"
             logger.info(f"[{correlation_id}] [Fraud] Order ID {order_id} cleared from cache")
         else:
-            # Vector clock conflict
+            # Vector clock conflict - we have local events not reflected in final clock
             response.success = False
             response.message = f"Vector clock conflict for clearing order ID {order_id}"
             logger.warning(f"[{correlation_id}] [Fraud] Vector clock conflict for clearing order ID {order_id}")
@@ -370,8 +439,15 @@ class FraudService(fraud_detection_grpc.FraudServiceServicer):
 
     def DetectFraud(self, request, context):
         """
-        Handles gRPC requests for fraud detection (Legacy Method).
-        This now primarily acts as an initial entry point for caching if InitializeFraudDetection isn't used.
+        Legacy method for fraud detection.
+        Kept for backward compatibility but new event-based methods are preferred.
+        
+        Args:
+            request: FraudRequest containing transaction data
+            context: The gRPC context
+            
+        Returns:
+            FraudResponse: Contains approval status and message
         """
         # Extract correlation ID from metadata (if available)
         correlation_id = next((value for key, value in context.invocation_metadata()
@@ -401,6 +477,7 @@ class FraudService(fraud_detection_grpc.FraudServiceServicer):
 def serve():
     """
     Starts the gRPC server and listens for incoming fraud detection requests.
+    Uses ThreadPoolExecutor to handle concurrent requests.
     """
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     service = FraudService()
