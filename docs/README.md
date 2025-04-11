@@ -15,6 +15,7 @@ This project implements a **microservices-based architecture** using **gRPC** an
    - Manages vector clocks for causal consistency
    - Routes events to appropriate services following DAG dependencies
    - Enqueues approved orders for processing
+   - Returns responses to clients before order fulfillment completes
 
 3. **Transaction Verification**
    - Validates transaction data integrity
@@ -37,9 +38,9 @@ This project implements a **microservices-based architecture** using **gRPC** an
 
 6. **Order Queue**
    - Buffers approved orders for processing
-   - Maintains priority-based order queue
+   - Maintains priority-based order queue with heapq
    - Provides queue status information
-   - Ensures orders wait for processing in priority order
+   - Prioritizes orders based on quantity, shipping method, and gift wrapping status
 
 7. **Order Executor Cluster**
    - Three executor instances implementing the Raft Algorithm
@@ -50,7 +51,7 @@ This project implements a **microservices-based architecture** using **gRPC** an
 ## System Model
 
 ### Communication Model
-- **Synchronous gRPC Communication**: Services communicate through synchronous gRPC calls with protocol buffers
+- **Hybrid Communication Pattern**: Synchronous gRPC for service validation steps; asynchronous order processing
 - **Vector Clock Propagation**: All services use vector clocks to track causality between distributed events  
 - **Request Correlation**: Each request is tracked with a unique correlation ID across service boundaries
 - **Service Discovery**: Services locate each other via container names in the Docker network
@@ -140,20 +141,34 @@ project/
 
 2. **Event Execution Phase**:
    - **Events a & b** (parallel): Verify items and user data
-   - **Events c & d** (parallel, after a & b): Verify credit card format and check user data
-   - **Event d** uses AI to analyze user data for fraud patterns
-   - **Event e** (after c & d): Check credit card for fraud with velocity checks
+   - **Events c & d** (parallel, with dependencies):
+     - c (VerifyCreditCardFormat) depends on a completion
+     - d (CheckUserData) depends on b completion
+   - **Event e** (after c & d): Check credit card for fraud
    - **Event f** (after e): Get AI-generated book suggestions
    - Each event updates and propagates vector clocks
 
 3. **Order Processing Phase**:
-   - Orchestrator checks if order executor cluster has a leader
-   - Enqueues approved order in order queue
-   - Leader in order executor cluster dequeues and processes order
+   - Orchestrator enqueues approved order in priority queue
+   - Returns response to client immediately after enqueuing
+   - Leader in executor cluster asynchronously dequeues and processes orders
 
 4. **Cleanup Phase**:
    - Orchestrator sends final vector clock to all services
    - Services clear cached order data if vector clock indicates all events are complete
+
+## Priority Queue Implementation
+
+- **Input Factors**:
+  - Item quantity (larger orders get higher priority)
+  - Shipping method (express > priority > standard)
+  - Gift wrapping status (wrapped items get higher priority)
+  
+- **Implementation Details**:
+  - Uses Python's `heapq` for efficient priority management
+  - Thread-safe with locking mechanisms
+  - Includes randomness factor to prevent starvation
+  - Lower priority value = higher processing priority
 
 ## AI Integration
 
@@ -301,8 +316,11 @@ sequenceDiagram
     
     Orchestrator-->>Client: HTTP Response
     
-    OE->>OQ: DequeueOrder
+    Note over Client,Orchestrator: Client receives response before processing completes
+    
+    OE->>OQ: DequeueOrder (asynchronous)
     OQ-->>OE: DequeueResponse
+    Note over OE: Order processed asynchronously
     
     par Clear Caches
         Orchestrator->>TV: ClearTransactionCache
@@ -324,10 +342,11 @@ graph TD;
     FraudDetection -->|API Call| OpenAI[☁️ OpenAI GPT API];
     Suggestions -->|API Call| OpenAI;
     
-    Orchestrator -->|gRPC :50054| OrderQueue[📋 Order Queue Service];
-    OrderQueue -->|gRPC :50055| OrderExecutor1[⚙️ Order Executor 1];
-    OrderQueue -->|gRPC :50055| OrderExecutor2[⚙️ Order Executor 2];
-    OrderQueue -->|gRPC :50055| OrderExecutor3[⚙️ Order Executor 3];
+    Orchestrator -->|gRPC :50054| OrderQueue[📋 Priority Order Queue Service];
+    
+    OrderExecutor1["⚙️ Order Executor 1 (Raft Node)"] -.->|Poll for Orders| OrderQueue;
+    OrderExecutor2["⚙️ Order Executor 2 (Raft Node)"] -.->|Poll for Orders| OrderQueue;
+    OrderExecutor3["⚙️ Order Executor 3 (Raft Node)"] -.->|Poll for Orders| OrderQueue;
     
     OrderExecutor1 -.->|Raft Consensus| OrderExecutor2;
     OrderExecutor2 -.->|Raft Consensus| OrderExecutor3;
@@ -336,9 +355,22 @@ graph TD;
     TransactionVerification -->|gRPC Response| Orchestrator;
     FraudDetection -->|gRPC Response| Orchestrator;
     Suggestions -->|gRPC Response| Orchestrator;
-    
+
     Orchestrator -->|HTTP Response| User;
+    
+    Note["🔑 Only elected Raft leader processes orders"]
+    OrderExecutor1 --- Note;
+    OrderExecutor2 --- Note;
+    OrderExecutor3 --- Note;
 ```
+
+
+## Cache Clearing with Vector Clock Safety
+
+- **Orchestrator** sends final vector clock to each service after order processing is complete
+- **Services** verify that their local vector clock ≤ final vector clock before clearing cached order data
+- **Conflict Detection** occurs if local clock shows events not captured in final clock
+- **Safety Checks** prevent inconsistent data cleanup
 
 
 ## Leader Election Diagram
