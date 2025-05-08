@@ -234,6 +234,10 @@ class BooksDatabaseServiceServicer(books_database_pb2_grpc.BooksDatabaseServiceS
         self.pending_replications = {} # op_id -> {count, event, start_time}
         self.replication_lock = threading.Lock()
 
+        # For 2PC
+        self.active_2pc_transactions = {} # transaction_id -> {"state": "PREPARED", "operations": [...]}
+        self.transactions_lock = threading.Lock() # Lock for active_2pc_transactions
+
         logger.info(f"[{self.node_id}] BooksDatabaseService initialized. Datastore: {self.datastore}")
         self.raft_node.start()
 
@@ -436,6 +440,154 @@ class BooksDatabaseServiceServicer(books_database_pb2_grpc.BooksDatabaseServiceS
         logger.info(f"[{self.node_id}] Applied replicated data for {request.book_id}. New quantity: {self.datastore[request.book_id]}")
         return books_database_pb2.InternalReplicateResponse(success=True, node_id=self.node_id)
 
+    # --- 2PC Transaction Methods ---
+    def PrepareTransaction(self, request, context):
+        transaction_id = request.transaction_id
+        logger.info(f"[{self.node_id}] PrepareTransaction received for TX_ID: {transaction_id}")
+
+        if not self._is_leader():
+            leader_id = self.raft_node.leader_id
+            msg = f"Not the leader. Current leader for DB Raft group might be {leader_id}."
+            logger.warning(f"[{self.node_id}] {msg} Role: {self.raft_node.state}")
+            # Return VOTE_ABORT as this node cannot coordinate the prepare.
+            # Client (order_executor) should ideally route 2PC ops to the DB leader.
+            # For now, we'll assume order_executor might not know DB leader and any node can be hit.
+            return books_database_pb2.DBVoteTransactionResponse(
+                transaction_id=transaction_id,
+                vote=books_database_pb2.DB_VOTE_ABORT,
+                message=msg
+            )
+
+        with self.transactions_lock:
+            if transaction_id in self.active_2pc_transactions:
+                # Handle retries: if already prepared and matches, vote commit. If state is different, could be an issue.
+                if self.active_2pc_transactions[transaction_id]["state"] == "PREPARED":
+                     logger.warning(f"[{self.node_id}] TX_ID: {transaction_id} already prepared. Voting COMMIT again.")
+                     return books_database_pb2.DBVoteTransactionResponse(transaction_id=transaction_id, vote=books_database_pb2.DB_VOTE_COMMIT, message="Already prepared")
+                else: # COMMITTED or ABORTED
+                     logger.error(f"[{self.node_id}] TX_ID: {transaction_id} in terminal state {self.active_2pc_transactions[transaction_id]['state']}. Voting ABORT.")
+                     return books_database_pb2.DBVoteTransactionResponse(transaction_id=transaction_id, vote=books_database_pb2.DB_VOTE_ABORT, message="Transaction in terminal state")
+
+            # Validate all operations
+            for op in request.operations:
+                with self.key_locks[op.book_id]: # Ensure consistent view during check
+                    current_quantity = self.datastore.get(op.book_id, None)
+                    if current_quantity is None:
+                        logger.warning(f"[{self.node_id}] TX_ID: {transaction_id} Prepare ABORT: Book {op.book_id} not found.")
+                        return books_database_pb2.DBVoteTransactionResponse(transaction_id=transaction_id, vote=books_database_pb2.DB_VOTE_ABORT, message=f"Book {op.book_id} not found")
+                    
+                    if op.quantity_change < 0: # Decrement
+                        if current_quantity < abs(op.quantity_change):
+                            logger.warning(f"[{self.node_id}] TX_ID: {transaction_id} Prepare ABORT: Insufficient stock for {op.book_id}. Has {current_quantity}, needs {abs(op.quantity_change)}")
+                            return books_database_pb2.DBVoteTransactionResponse(transaction_id=transaction_id, vote=books_database_pb2.DB_VOTE_ABORT, message=f"Insufficient stock for {op.book_id}")
+                    # Add checks for other op types if any (e.g. positive quantity_change for increment)
+
+            # All checks passed, stage the transaction
+            self.active_2pc_transactions[transaction_id] = {
+                "state": "PREPARED",
+                "operations": request.operations
+            }
+            logger.info(f"[{self.node_id}] TX_ID: {transaction_id} PREPARED. Voting COMMIT.")
+            return books_database_pb2.DBVoteTransactionResponse(transaction_id=transaction_id, vote=books_database_pb2.DB_VOTE_COMMIT, message="Prepared successfully")
+
+    def CommitTransaction(self, request, context):
+        transaction_id = request.transaction_id
+        logger.info(f"[{self.node_id}] CommitTransaction received for TX_ID: {transaction_id}")
+
+        if not self._is_leader():
+            # This is a more critical issue if a non-leader receives a commit.
+            # The coordinator should have ensured Prepare was acked by the leader.
+            msg = "Not the leader. Cannot process Commit."
+            logger.error(f"[{self.node_id}] {msg} Role: {self.raft_node.state}")
+            return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_FAILURE, message=msg)
+
+        with self.transactions_lock:
+            if transaction_id not in self.active_2pc_transactions or self.active_2pc_transactions[transaction_id]["state"] != "PREPARED":
+                current_state = self.active_2pc_transactions.get(transaction_id, {}).get("state", "NOT_FOUND")
+                logger.error(f"[{self.node_id}] TX_ID: {transaction_id} Cannot Commit. State: {current_state}")
+                # If already committed (e.g. retry), ACK success. Otherwise, it's an error.
+                if current_state == "COMMITTED":
+                    return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_SUCCESS, message="Transaction already committed")
+                return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_FAILURE, message=f"Transaction not in PREPARED state (state: {current_state})")
+
+            staged_operations = self.active_2pc_transactions[transaction_id]["operations"]
+            
+            # Apply and replicate changes
+            # This part needs to be robust. If any sub-operation fails replication, the whole commit is problematic.
+            all_ops_replicated = True
+            applied_ops_details = [] # For potential rollback if a later op fails
+
+            for op in staged_operations:
+                book_id = op.book_id
+                quantity_change = op.quantity_change
+                
+                with self.key_locks[book_id]:
+                    current_quantity = self.datastore.get(book_id, 0) # Should exist due to Prepare check
+                    new_quantity = current_quantity + quantity_change # quantity_change is negative for decrement
+                    
+                    original_book_quantity_for_rollback = self.datastore[book_id]
+                    self.datastore[book_id] = new_quantity # Apply locally
+                    
+                    # Use a unique ID for this sub-operation's replication
+                    replication_op_id = f"{transaction_id}_{book_id}"
+                    logger.info(f"[{self.node_id}] TX_ID: {transaction_id} - Committing op for {book_id}: {current_quantity} -> {new_quantity}. Replicating (op_id: {replication_op_id})...")
+                    
+                    if not self._replicate_to_backups(book_id, new_quantity, replication_op_id):
+                        logger.error(f"[{self.node_id}] TX_ID: {transaction_id} - FAILED to replicate change for {book_id}. Rolling back this operation.")
+                        self.datastore[book_id] = original_book_quantity_for_rollback # Rollback this specific op
+                        all_ops_replicated = False
+                        # TODO: Need a strategy for partial commit failure. For now, fail the whole 2PC commit.
+                        # This might require rolling back previously successful ops in *this* transaction.
+                        # For simplicity, we stop and mark the 2PC commit as failed.
+                        break 
+                    else:
+                        applied_ops_details.append({"book_id": book_id, "old_qty": original_book_quantity_for_rollback, "new_qty": new_quantity})
+                        logger.info(f"[{self.node_id}] TX_ID: {transaction_id} - Successfully applied and replicated for {book_id}.")
+
+            if all_ops_replicated:
+                self.active_2pc_transactions[transaction_id]["state"] = "COMMITTED"
+                logger.info(f"[{self.node_id}] TX_ID: {transaction_id} COMMITTED successfully.")
+                return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_SUCCESS, message="Transaction committed and replicated")
+            else:
+                # Attempt to rollback all applied operations in this transaction due to a replication failure
+                logger.error(f"[{self.node_id}] TX_ID: {transaction_id} - Commit FAILED due to replication issue. Attempting to rollback locally applied changes for this TX.")
+                for detail in reversed(applied_ops_details): # Rollback in reverse order
+                    with self.key_locks[detail["book_id"]]:
+                        self.datastore[detail["book_id"]] = detail["old_qty"]
+                        # Note: This local rollback doesn't undo successful replications of earlier ops in this TX.
+                        # This is a limitation of the current simplified rollback.
+                self.active_2pc_transactions[transaction_id]["state"] = "ABORTED" # Or a special "COMMIT_FAILED" state
+                return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_FAILURE, message="Commit failed due to replication failure of one or more operations")
+
+    def AbortTransaction(self, request, context):
+        transaction_id = request.transaction_id
+        logger.info(f"[{self.node_id}] AbortTransaction received for TX_ID: {transaction_id}")
+
+        if not self._is_leader():
+            # Non-leader acknowledging abort is fine, as the transaction won't be processed by it anyway.
+            msg = "Not the leader, but acknowledging Abort."
+            logger.warning(f"[{self.node_id}] {msg} Role: {self.raft_node.state}")
+            # It's generally safe to ACK abort even if not leader or TX not found.
+            return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_SUCCESS, message=msg)
+
+        with self.transactions_lock:
+            tx_info = self.active_2pc_transactions.get(transaction_id)
+            if not tx_info:
+                logger.warning(f"[{self.node_id}] TX_ID: {transaction_id} not found for Abort. Assuming already handled or never prepared.")
+                return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_SUCCESS, message="Transaction not found, abort acknowledged")
+
+            if tx_info["state"] == "COMMITTED":
+                logger.error(f"[{self.node_id}] TX_ID: {transaction_id} CRITICAL: Received Abort for already COMMITTED transaction.")
+                return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_FAILURE, message="Transaction already committed, cannot abort")
+            
+            if tx_info["state"] == "ABORTED":
+                 logger.info(f"[{self.node_id}] TX_ID: {transaction_id} already ABORTED. Acknowledging abort again.")
+                 return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_SUCCESS, message="Transaction already aborted")
+
+            tx_info["state"] = "ABORTED"
+            # No actual data changes were made during Prepare, so just update state.
+            logger.info(f"[{self.node_id}] TX_ID: {transaction_id} ABORTED.")
+            return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_SUCCESS, message="Transaction aborted successfully")
 
 def serve():
     db_node_port = os.environ.get("DB_NODE_PORT", "50060") # Default port

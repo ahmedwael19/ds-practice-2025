@@ -443,20 +443,11 @@ class RaftConsensus:
                     logger.info(f"[{correlation_id}] Order {order_id} local execution completed successfully")
                     
                     with self.lock:
-                        self.processed_orders += 1
+                        self.processed_orders_count += 1
                 else:
                     logger.error(f"[{correlation_id}] TX[{transaction_id}]: Distributed transaction for order {order_id} FAILED. Order will not be processed.")
                     # TODO: Handle failed transaction (e.g., notify user, requeue for retry with backoff, move to dead-letter queue)
         
-        except Exception as e:
-            logger.error(f"[{correlation_id}] Error in _process_next_order (outside 2PC block or during dequeue): {e}")
-            # This exception is for errors outside the 2PC block or during dequeue.
-            # If it's a dequeue error, processing_order flag should still be reset.
-            # If it's an error after 2PC, it means local processing failed.
-            # The 'raise' was removed to ensure 'finally' block always runs.
-            # Consider if re-raising is appropriate for some errors.
-                order_data = dequeue_response.order_data # This is order_queue_pb2.OrderData
-                logger.info(f"[{self.node_id}][{correlation_id}] OE Leader: Dequeued order {order_id}. Items: {len(order_data.items)}")
 
         except grpc.RpcError as e:
             logger.error(f"[{self.node_id}][{correlation_id}] OE Leader: RPC error interacting with queue service: {e.code()} - {e.details()}", exc_info=True)
@@ -465,62 +456,211 @@ class RaftConsensus:
             logger.error(f"[{self.node_id}][{correlation_id}] OE Leader: Unexpected error during queue interaction: {e_gen}", exc_info=True)
             return
 
-        # If order successfully dequeued, proceed to process it
+        # If order successfully dequeued, proceed to process it with 2PC
         if order_id and order_data:
-            logger.info(f"[{self.node_id}][{correlation_id}] OE Leader: Processing order {order_id} with {len(order_data.items)} items.")
-            
-            all_items_processed_successfully = True
-            # Store (book_id, quantity_decremented) for potential compensation/rollback if needed
-            processed_item_compensations = [] 
+            transaction_id = str(uuid.uuid4())
+            logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Starting 2PC for order {order_id} with {len(order_data.items)} items.")
 
+            # 1. Construct BookOperations for DB Prepare from order_data.items
+            db_operations = []
+            valid_order_items = True
             for item in order_data.items:
-                # Map item.name from order_data to the book_id used in BooksDatabase
-                # This mapping is crucial and needs to be robust.
-                # Example placeholder mapping based on previous examples:
                 book_id_in_db = None
                 item_name_lower = item.name.lower()
-                if "clean code" in item_name_lower: book_id_in_db = "book_101_clean_code"
+                # This mapping logic should ideally be more robust or data-driven
+                if "book a" in item_name_lower: book_id_in_db = "book_101_clean_code"
                 elif "pragmatic programmer" in item_name_lower: book_id_in_db = "book_102_pragmatic_programmer"
                 elif "design patterns" in item_name_lower: book_id_in_db = "book_103_design_patterns"
                 elif "domain-driven design" in item_name_lower: book_id_in_db = "book_104_domain_driven_design"
-                # Add more mappings or use a direct book_id if available in order_data.items
                 
                 if not book_id_in_db:
-                    logger.error(f"[{self.node_id}][{correlation_id}] ORDER_ITEM_FAIL: No DB book_id mapping for item '{item.name}' in order {order_id}. Failing order.")
-                    all_items_processed_successfully = False
-                    break # Fail the entire order for this item
-
-                logger.info(f"[{self.node_id}][{correlation_id}] ORDER_ITEM: Processing item '{item.name}' (DB ID: {book_id_in_db}), quantity: {item.quantity}")
-                
-                decrement_req = books_database_pb2.DecrementStockRequest(
-                    book_id=book_id_in_db,
-                    amount_to_decrement=item.quantity
-                )
-                # Call the DB service using the helper method
-                decrement_resp = self._call_db_service_rpc("DecrementStock", decrement_req)
-
-                if decrement_resp and decrement_resp.success:
-                    logger.info(f"[{self.node_id}][{correlation_id}] ORDER_ITEM_SUCCESS: Stock for {book_id_in_db} decremented. New DB quantity: {decrement_resp.new_quantity}")
-                    processed_item_compensations.append({"book_id": book_id_in_db, "decremented_by": item.quantity})
-                else:
-                    error_msg = decrement_resp.message if decrement_resp else "DB call failed or returned unsuccessful"
-                    logger.error(f"[{self.node_id}][{correlation_id}] ORDER_ITEM_FAIL: Failed to decrement stock for {book_id_in_db}. Reason: {error_msg}. Failing order.")
-                    all_items_processed_successfully = False
-                    # TODO: Implement compensation logic here for items in `processed_item_compensations`
-                    # For now, just break and mark order as failed.
-                    # e.g., self._compensate_stock_updates(processed_item_compensations, correlation_id)
-                    break 
+                    logger.error(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Cannot map item '{item.name}' to a DB book_id. Aborting order pre-2PC.")
+                    valid_order_items = False
+                    break
+                db_operations.append(books_database_pb2.BookOperation(book_id=book_id_in_db, quantity_change=-item.quantity))
             
-            if all_items_processed_successfully:
-                logger.info(f"[{self.node_id}][{correlation_id}] ORDER_SUCCESS: Order {order_id} processed successfully. All stock updates committed.")
-                # Further actions: e.g., notify payments, shipping, etc. (not in scope of this task)
-                with self.lock: # Lock to update shared counter
-                    self.processed_orders_count += 1
-                logger.info(f"[{self.node_id}] Total orders processed by this leader instance: {self.processed_orders_count}")
-            else:
-                logger.error(f"[{self.node_id}][{correlation_id}] ORDER_FAIL: Order {order_id} failed due to stock update issues. Compensation needed if partially processed.")
-                # If compensation was implemented, it would have been triggered above.
-                # Mark order as failed in some persistent store (not in scope for this task)
+            if not valid_order_items:
+                # Order cannot be processed, no 2PC initiated.
+                # Consider this a failed order.
+                return
+
+            # --- 2PC State Variables ---
+            payment_vote = None # payment_service_pb2.VOTE_UNSPECIFIED
+            db_vote = None      # books_database_pb2.DB_VOTE_UNSPECIFIED
+            
+            payment_prepared_successfully = False
+            db_prepared_successfully = False
+
+            # --- Prepare Phase ---
+            logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Entering PREPARE phase.")
+            
+            # Prepare Payment Service
+            try:
+                with grpc.insecure_channel(PAYMENT_SERVICE_ADDRESS) as payment_channel:
+                    payment_stub = payment_service_pb2_grpc.PaymentServiceStub(payment_channel)
+                    # TODO: Extract actual amount from order_data if available/needed by payment service
+                    amount = 10.0  # Dummy amount for now
+                    ps_prepare_req = payment_service_pb2.PaymentPrepareRequest(
+                        transaction_id=transaction_id, order_id=order_id, amount=amount
+                    )
+                    logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Sending Prepare to PaymentService.")
+                    ps_prepare_resp = payment_stub.Prepare(ps_prepare_req, timeout=5.0)
+                    payment_vote = ps_prepare_resp.vote
+                    if payment_vote == payment_service_pb2.VOTE_COMMIT:
+                        payment_prepared_successfully = True
+                        logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: PaymentService VOTE_COMMIT.")
+                    else:
+                        logger.warning(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: PaymentService VOTE_ABORT. Reason: {ps_prepare_resp.message}")
+            except grpc.RpcError as e:
+                logger.error(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: gRPC error preparing PaymentService: {e.code()} - {e.details()}")
+                payment_vote = payment_service_pb2.VOTE_ABORT # Treat RPC error as abort
+            except Exception as e:
+                logger.error(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Non-gRPC error preparing PaymentService: {e}", exc_info=True)
+                payment_vote = payment_service_pb2.VOTE_ABORT
+
+            # Prepare Books Database Service (only if payment didn't immediately vote abort)
+            if payment_vote == payment_service_pb2.VOTE_COMMIT:
+                db_prepare_req = books_database_pb2.DBPrepareRequest(
+                    transaction_id=transaction_id, operations=db_operations
+                )
+                logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Sending PrepareTransaction to BooksDatabaseService.")
+                db_prepare_resp = self._call_db_service_rpc("PrepareTransaction", db_prepare_req) # Uses leader discovery
+                
+                if db_prepare_resp and db_prepare_resp.vote == books_database_pb2.DB_VOTE_COMMIT:
+                    db_vote = books_database_pb2.DB_VOTE_COMMIT
+                    db_prepared_successfully = True
+                    logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: BooksDatabaseService DB_VOTE_COMMIT.")
+                else:
+                    db_vote = books_database_pb2.DB_VOTE_ABORT
+                    err_msg = db_prepare_resp.message if db_prepare_resp else "PrepareTransaction call failed or no response"
+                    logger.warning(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: BooksDatabaseService DB_VOTE_ABORT. Reason: {err_msg}")
+            else: # Payment service already aborted or failed prepare
+                 db_vote = books_database_pb2.DB_VOTE_ABORT # No need to call DB if payment failed
+                 logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Skipping DB Prepare as PaymentService did not VOTE_COMMIT.")
+
+
+            # --- Decision Phase ---
+            global_decision_is_commit = payment_prepared_successfully and db_prepared_successfully
+            logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Global decision is {'COMMIT' if global_decision_is_commit else 'ABORT'}.")
+
+            # --- Commit/Abort Phase ---
+            payment_final_ack_ok = False
+            db_final_ack_ok = False
+            
+            payment_channel = None
+            payment_stub = None
+            
+            # Create payment channel/stub only if needed for Commit/Abort
+            # This avoids redundant channel creation within the commit/abort logic below
+            if payment_prepared_successfully:
+                try:
+                    payment_channel = grpc.insecure_channel(PAYMENT_SERVICE_ADDRESS)
+                    payment_stub = payment_service_pb2_grpc.PaymentServiceStub(payment_channel)
+                except Exception as e:
+                     logger.error(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Failed to create PaymentService channel for Commit/Abort phase: {e}", exc_info=True)
+                     # If channel fails, we cannot proceed with commit/abort for payment service. Mark as failed.
+                     payment_final_ack_ok = False # Cannot proceed, will lead to failed commit/abort
+
+            try: # Use try-finally to ensure channel closure if it was opened
+                if global_decision_is_commit:
+                    logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Entering COMMIT phase.")
+                    # Commit Payment Service
+                    if payment_stub: # Check if stub was created successfully
+                        try:
+                            ps_commit_req = payment_service_pb2.TransactionRequest(transaction_id=transaction_id)
+                            logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Sending Commit to PaymentService.")
+                            ps_commit_resp = payment_stub.Commit(ps_commit_req, timeout=5.0)
+                            if ps_commit_resp.status == payment_service_pb2.ACK_SUCCESS:
+                                payment_final_ack_ok = True
+                                logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: PaymentService Commit ACK_SUCCESS.")
+                            else:
+                                logger.error(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: PaymentService Commit ACK_FAILURE. Reason: {ps_commit_resp.message}. CRITICAL ERROR.")
+                        except Exception as e:
+                            logger.error(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Error committing PaymentService: {e}", exc_info=True)
+                            payment_final_ack_ok = False # Explicitly mark failure on exception
+                    else: # Stub creation failed earlier or wasn't needed (prepare failed)
+                         if payment_prepared_successfully: # Log error only if we expected to commit
+                            logger.error(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Cannot commit PaymentService, channel/stub unavailable.")
+                         payment_final_ack_ok = False # Mark as failed if prepare was successful but stub failed
+
+                    # Commit Books Database Service (only if payment commit was OK, or handle partial failures)
+                    if payment_final_ack_ok: # Proceed only if payment commit succeeded
+                        db_commit_req = books_database_pb2.DBTransactionRequest(transaction_id=transaction_id)
+                        logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Sending CommitTransaction to BooksDatabaseService.")
+                        db_commit_resp = self._call_db_service_rpc("CommitTransaction", db_commit_req)
+                        if db_commit_resp and db_commit_resp.status == books_database_pb2.DB_ACK_SUCCESS:
+                            db_final_ack_ok = True
+                            logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: BooksDatabaseService Commit DB_ACK_SUCCESS.")
+                        else:
+                            err_msg = db_commit_resp.message if db_commit_resp else "CommitTransaction call failed or no response"
+                            logger.error(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: BooksDatabaseService Commit DB_ACK_FAILURE. Reason: {err_msg}. CRITICAL ERROR.")
+                            db_final_ack_ok = False # Explicitly mark failure
+                    else: # Payment commit failed
+                        logger.error(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Skipping DB Commit as PaymentService commit failed. This is a divergence scenario requiring robust handling (e.g. compensation).")
+                        db_final_ack_ok = False # DB commit did not happen
+                        # Attempt to Abort DB since it was prepared but payment commit failed
+                        if db_prepared_successfully:
+                            logger.warning(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Attempting to Abort BooksDatabase due to PaymentService commit failure.")
+                            db_abort_req = books_database_pb2.DBTransactionRequest(transaction_id=transaction_id)
+                            self._call_db_service_rpc("AbortTransaction", db_abort_req) # Best effort abort
+
+                else: # Global decision is ABORT
+                    logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Entering ABORT phase.")
+                    # Abort Payment Service (if it was successfully prepared)
+                    if payment_prepared_successfully:
+                        if payment_stub: # Check if stub was created successfully
+                            try:
+                                ps_abort_req = payment_service_pb2.TransactionRequest(transaction_id=transaction_id)
+                                logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Sending Abort to PaymentService.")
+                                ps_abort_resp = payment_stub.Abort(ps_abort_req, timeout=5.0)
+                                if ps_abort_resp.status == payment_service_pb2.ACK_SUCCESS:
+                                    payment_final_ack_ok = True # Abort was successful
+                                    logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: PaymentService Abort ACK_SUCCESS.")
+                                else:
+                                    logger.error(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: PaymentService Abort ACK_FAILURE. Reason: {ps_abort_resp.message}")
+                                    payment_final_ack_ok = False # Explicitly mark failure
+                            except Exception as e:
+                                logger.error(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Error aborting PaymentService: {e}", exc_info=True)
+                                payment_final_ack_ok = False # Explicitly mark failure
+                        else: # Stub creation failed earlier
+                            logger.error(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Cannot abort PaymentService, channel/stub unavailable.")
+                            payment_final_ack_ok = False # Mark as failed
+                    else: # Payment was not successfully prepared, so it's implicitly aborted from its view
+                        payment_final_ack_ok = True 
+                    
+                    # Abort Books Database Service (if it was successfully prepared)
+                    if db_prepared_successfully:
+                        db_abort_req = books_database_pb2.DBTransactionRequest(transaction_id=transaction_id)
+                        logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: Sending AbortTransaction to BooksDatabaseService.")
+                        db_abort_resp = self._call_db_service_rpc("AbortTransaction", db_abort_req)
+                        if db_abort_resp and db_abort_resp.status == books_database_pb2.DB_ACK_SUCCESS:
+                            db_final_ack_ok = True # Abort was successful
+                            logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: BooksDatabaseService Abort DB_ACK_SUCCESS.")
+                        else:
+                            err_msg = db_abort_resp.message if db_abort_resp else "AbortTransaction call failed or no response"
+                            logger.error(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: BooksDatabaseService Abort DB_ACK_FAILURE. Reason: {err_msg}")
+                            db_final_ack_ok = False # Explicitly mark failure
+                    else: # DB was not successfully prepared
+                        db_final_ack_ok = True
+            finally:
+                # Ensure payment channel is closed if it was opened
+                if payment_channel:
+                    payment_channel.close()
+
+            # --- Final Outcome Evaluation ---
+            if global_decision_is_commit:
+                if payment_final_ack_ok and db_final_ack_ok:
+                    logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: ORDER {order_id} SUCCESSFULLY PROCESSED AND COMMITTED.")
+                    with self.lock:
+                        self.processed_orders_count += 1
+                    logger.info(f"[{self.node_id}] Total orders processed by this leader instance: {self.processed_orders_count}")
+                else:
+                    logger.error(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: ORDER {order_id} FAILED COMMIT PHASE. PaymentAckOK: {payment_final_ack_ok}, DBAckOK: {db_final_ack_ok}. Manual intervention likely required.")
+            else: # Global decision was ABORT
+                if payment_final_ack_ok and db_final_ack_ok:
+                    logger.info(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: ORDER {order_id} SUCCESSFULLY ABORTED.")
+                else:
+                    logger.error(f"[{self.node_id}][{correlation_id}] TX[{transaction_id}]: ORDER {order_id} FAILED ABORT PHASE. PaymentAckOK: {payment_final_ack_ok}, DBAckOK: {db_final_ack_ok}. State might be inconsistent.")
 
 class OrderExecutorServicer(order_executor_pb2_grpc.OrderExecutorServiceServicer):
     def __init__(self, consensus_algorithm): # Renamed for clarity

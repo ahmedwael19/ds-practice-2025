@@ -20,6 +20,52 @@ service BooksDatabaseService {
 
     // --- Helper to find current leader of this DB Raft group ---
     rpc GetNodeRole(GetNodeRoleRequest) returns (GetNodeRoleResponse);
+
+    // --- 2PC Transaction RPCs ---
+    rpc PrepareTransaction(DBPrepareRequest) returns (DBVoteTransactionResponse);
+    rpc CommitTransaction(DBTransactionRequest) returns (DBAckTransactionResponse);
+    rpc AbortTransaction(DBTransactionRequest) returns (DBAckTransactionResponse);
+}
+
+// --- Enums for 2PC ---
+enum DBVoteStatus {
+    DB_VOTE_UNSPECIFIED = 0;
+    DB_VOTE_COMMIT = 1;
+    DB_VOTE_ABORT = 2;
+}
+
+enum DBAckStatus {
+    DB_ACK_UNSPECIFIED = 0;
+    DB_ACK_SUCCESS = 1;
+    DB_ACK_FAILURE = 2;
+}
+
+// --- Messages for 2PC ---
+message BookOperation {
+    string book_id = 1;
+    int32 quantity_change = 2; // Negative for decrement, positive for increment (if needed)
+    // Potentially add current_expected_stock for optimistic concurrency control if needed
+}
+
+message DBPrepareRequest {
+    string transaction_id = 1;
+    repeated BookOperation operations = 2; // List of book stock changes for this transaction
+}
+
+message DBVoteTransactionResponse { // Renamed to avoid conflict with DBVoteResponse for Raft
+    string transaction_id = 1;
+    DBVoteStatus vote = 2;
+    string message = 3; // Optional: for conveying reasons for abort
+}
+
+message DBTransactionRequest {
+    string transaction_id = 1;
+}
+
+message DBAckTransactionResponse { // Renamed to avoid conflict
+    string transaction_id = 1;
+    DBAckStatus status = 2;
+    string message = 3; // Optional: for conveying status messages
 }
 
 // --- Stock Operations ---

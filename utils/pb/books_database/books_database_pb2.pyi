@@ -1,8 +1,70 @@
+from google.protobuf.internal import containers as _containers
+from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Optional as _Optional
+from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
+
+class DBVoteStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    DB_VOTE_UNSPECIFIED: _ClassVar[DBVoteStatus]
+    DB_VOTE_COMMIT: _ClassVar[DBVoteStatus]
+    DB_VOTE_ABORT: _ClassVar[DBVoteStatus]
+
+class DBAckStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    DB_ACK_UNSPECIFIED: _ClassVar[DBAckStatus]
+    DB_ACK_SUCCESS: _ClassVar[DBAckStatus]
+    DB_ACK_FAILURE: _ClassVar[DBAckStatus]
+DB_VOTE_UNSPECIFIED: DBVoteStatus
+DB_VOTE_COMMIT: DBVoteStatus
+DB_VOTE_ABORT: DBVoteStatus
+DB_ACK_UNSPECIFIED: DBAckStatus
+DB_ACK_SUCCESS: DBAckStatus
+DB_ACK_FAILURE: DBAckStatus
+
+class BookOperation(_message.Message):
+    __slots__ = ("book_id", "quantity_change")
+    BOOK_ID_FIELD_NUMBER: _ClassVar[int]
+    QUANTITY_CHANGE_FIELD_NUMBER: _ClassVar[int]
+    book_id: str
+    quantity_change: int
+    def __init__(self, book_id: _Optional[str] = ..., quantity_change: _Optional[int] = ...) -> None: ...
+
+class DBPrepareRequest(_message.Message):
+    __slots__ = ("transaction_id", "operations")
+    TRANSACTION_ID_FIELD_NUMBER: _ClassVar[int]
+    OPERATIONS_FIELD_NUMBER: _ClassVar[int]
+    transaction_id: str
+    operations: _containers.RepeatedCompositeFieldContainer[BookOperation]
+    def __init__(self, transaction_id: _Optional[str] = ..., operations: _Optional[_Iterable[_Union[BookOperation, _Mapping]]] = ...) -> None: ...
+
+class DBVoteTransactionResponse(_message.Message):
+    __slots__ = ("transaction_id", "vote", "message")
+    TRANSACTION_ID_FIELD_NUMBER: _ClassVar[int]
+    VOTE_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    transaction_id: str
+    vote: DBVoteStatus
+    message: str
+    def __init__(self, transaction_id: _Optional[str] = ..., vote: _Optional[_Union[DBVoteStatus, str]] = ..., message: _Optional[str] = ...) -> None: ...
+
+class DBTransactionRequest(_message.Message):
+    __slots__ = ("transaction_id",)
+    TRANSACTION_ID_FIELD_NUMBER: _ClassVar[int]
+    transaction_id: str
+    def __init__(self, transaction_id: _Optional[str] = ...) -> None: ...
+
+class DBAckTransactionResponse(_message.Message):
+    __slots__ = ("transaction_id", "status", "message")
+    TRANSACTION_ID_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    transaction_id: str
+    status: DBAckStatus
+    message: str
+    def __init__(self, transaction_id: _Optional[str] = ..., status: _Optional[_Union[DBAckStatus, str]] = ..., message: _Optional[str] = ...) -> None: ...
 
 class BookStock(_message.Message):
     __slots__ = ("book_id", "quantity")
