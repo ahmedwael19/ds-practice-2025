@@ -505,6 +505,70 @@ The Raft leader election algorithm ensures:
 6. Split votes are resolved through randomized timeouts
 7. Network partitions are handled when healed
 
+
+## Commitment Protocol (2PC)
+The following diagrams illustrate the successful and unsuccesful flow in relation to the commitment protocol.
+
+__Scenario 1: Successful Commit__
+
+```mermaid
+sequenceDiagram
+    participant OE as Order Executor (Coordinator)
+    participant PS as Payment Service (Participant)
+    participant DB as Books Database (Participant)
+
+    Note over OE: Order processing begins...
+    OE->>+PS: Prepare(tx_id, order_details)
+    OE->>+DB: PrepareTransaction(tx_id, db_ops)
+
+    Note over PS: Validate payment, stage resources
+    PS-->>-OE: VOTE_COMMIT(tx_id)
+
+    Note over DB: Check stock, stage changes
+    DB-->>-OE: DB_VOTE_COMMIT(tx_id)
+
+    Note over OE: Both voted COMMIT. Decision: Global Commit.
+    OE->>+PS: Commit(tx_id)
+    OE->>+DB: CommitTransaction(tx_id)
+
+    Note over PS: Execute payment, release resources
+    PS-->>-OE: ACK_SUCCESS(tx_id)
+
+    Note over DB: Apply stock changes, replicate
+    DB-->>-OE: DB_ACK_SUCCESS(tx_id)
+
+    Note over OE: Transaction successful. Finalize order.
+```
+__Scenario 2: Abort (e.g., Database votes Abort)__
+
+```mermaid
+sequenceDiagram
+    participant OE as Order Executor (Coordinator)
+    participant PS as Payment Service (Participant)
+    participant DB as Books Database (Participant)
+
+    Note over OE: Order processing begins...
+    OE->>+PS: Prepare(tx_id, order_details)
+    OE->>+DB: PrepareTransaction(tx_id, db_ops)
+
+    Note over PS: Validate payment, stage resources
+    PS-->>-OE: VOTE_COMMIT(tx_id)
+
+    Note over DB: Check stock - Fails (e.g., insufficient)
+    DB-->>-OE: DB_VOTE_ABORT(tx_id, "Insufficient stock")
+
+    Note over OE: DB voted ABORT. Decision: Global Abort.
+    OE->>+PS: Abort(tx_id)  // Abort Payment Service as it was prepared
+    OE->>+DB: AbortTransaction(tx_id) // Also inform DB, though it already voted abort
+
+    Note over PS: Release staged resources
+    PS-->>-OE: ACK_SUCCESS(tx_id)
+
+    Note over DB: Discard staged changes (if any were staged before abort decision)
+    DB-->>-OE: DB_ACK_SUCCESS(tx_id)
+
+    Note over OE: Transaction aborted. Handle failure.
+```
 ---
 
 ## Project Contributors
