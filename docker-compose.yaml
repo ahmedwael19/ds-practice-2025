@@ -164,6 +164,22 @@ services:
       - order_queue
     networks:
       - app-network
+
+  # Service for handling payments as part of distributed commit
+  payment_service:
+    build:
+      context: ./
+      dockerfile: ./payment_service/Dockerfile
+    ports:
+      - "50058:50057"
+    environment:
+      - PYTHONUNBUFFERED=TRUE
+      - PYTHONFILE=/app/payment_service/src/app.py
+    volumes:
+      - ./utils:/app/utils
+      - ./payment_service/src:/app/payment_service/src
+    networks:
+      - app-network
     
 # Shared network for inter-service communication
 networks:

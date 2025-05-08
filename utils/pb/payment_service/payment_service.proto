@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package payment_service;
+
+enum Vote {
+  VOTE_UNSPECIFIED = 0;
+  VOTE_COMMIT = 1;
+  VOTE_ABORT = 2;
+}
+
+enum AckStatus {
+  ACK_UNSPECIFIED = 0;
+  ACK_SUCCESS = 1;
+  ACK_FAILURE = 2; // Optional: if commit/abort itself can fail
+}
+
+message PaymentPrepareRequest {
+  string transaction_id = 1;
+  string order_id = 2;
+  double amount = 3;
+  // Add any other payment-specific details if needed
+}
+
+message VoteResponse {
+  string transaction_id = 1;
+  Vote vote = 2;
+  string message = 3; // Optional: for conveying reasons for abort
+}
+
+message TransactionRequest {
+  string transaction_id = 1;
+}
+
+message AckResponse {
+  string transaction_id = 1;
+  AckStatus status = 2;
+  string message = 3; // Optional: for conveying status messages
+}
+
+service PaymentService {
+  rpc Prepare(PaymentPrepareRequest) returns (VoteResponse);
+  rpc Commit(TransactionRequest) returns (AckResponse);
+  rpc Abort(TransactionRequest) returns (AckResponse);
+}

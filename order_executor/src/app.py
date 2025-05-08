@@ -15,10 +15,14 @@ order_executor_grpc_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb
 sys.path.insert(0, order_executor_grpc_path)
 order_queue_grpc_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/order_queue'))
 sys.path.insert(0, order_queue_grpc_path)
+payment_service_grpc_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/payment_service'))
+sys.path.insert(0, payment_service_grpc_path)
 import order_executor_pb2
 import order_executor_pb2_grpc
 import order_queue_pb2
 import order_queue_pb2_grpc
+import payment_service_pb2
+import payment_service_pb2_grpc
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -27,6 +31,7 @@ logger = logging.getLogger("order_executor")
 # Get the executor instance ID from environment (set in docker-compose)
 EXECUTOR_ID = os.environ.get("EXECUTOR_ID", str(uuid.uuid4())[:8])
 QUEUE_SERVICE = os.environ.get("QUEUE_SERVICE", "order_queue:50054")
+PAYMENT_SERVICE_ADDRESS = os.environ.get("PAYMENT_SERVICE_ADDRESS", "payment_service:50057")
 
 # Get all peer executor addresses from environment
 # Format: "executor1:50055,executor2:50055,..."
@@ -253,30 +258,79 @@ class RaftConsensus:
                 
                 # Process the order
                 order_id = dequeue_response.order_id
-                order_data = dequeue_response.order_data
+                order_data = dequeue_response.order_data # This is an OrderData protobuf message
                 
-                logger.info(f"[{correlation_id}] Processing order {order_id}")
-                
-                # Simulate order processing
-                logger.info(f"[{correlation_id}] Order {order_id} is being executed...")
-                
-                # Actual processing logic would go here:
-                # - Update inventory
-                # - Commit order to database
-                # - Process payment
-                # - Trigger notifications
-                
-                # Simulate processing time
-                time.sleep(1.0)
-                
-                logger.info(f"[{correlation_id}] Order {order_id} execution completed successfully")
-                
-                with self.lock:
-                    self.processed_orders += 1
+                logger.info(f"[{correlation_id}] Processing order {order_id} with data: {str(order_data)[:200]}...") # Log truncated string representation
+
+                # --- Distributed Transaction (2PC) with Payment Service ---
+                transaction_id = str(uuid.uuid4())
+                payment_success = False
+
+                try:
+                    with grpc.insecure_channel(PAYMENT_SERVICE_ADDRESS) as payment_channel:
+                        payment_stub = payment_service_pb2_grpc.PaymentServiceStub(payment_channel)
+
+                        # --- Prepare Phase ---
+                        # TODO: Extract actual amount from order_data if available
+                        amount = 10.0  # Dummy amount for now
+
+                        prepare_request = payment_service_pb2.PaymentPrepareRequest(
+                            transaction_id=transaction_id,
+                            order_id=order_id,
+                            amount=amount
+                        )
+                        logger.info(f"[{correlation_id}] TX[{transaction_id}]: Sending Prepare to payment service for order {order_id}")
+                        prepare_response = payment_stub.Prepare(prepare_request, timeout=5.0)
+
+                        if prepare_response.vote == payment_service_pb2.VOTE_COMMIT:
+                            logger.info(f"[{correlation_id}] TX[{transaction_id}]: Payment service VOTE_COMMIT for order {order_id}")
+
+                            # --- Commit Phase ---
+                            commit_request = payment_service_pb2.TransactionRequest(transaction_id=transaction_id)
+                            logger.info(f"[{correlation_id}] TX[{transaction_id}]: Sending Commit to payment service for order {order_id}")
+                            commit_response = payment_stub.Commit(commit_request, timeout=5.0)
+
+                            if commit_response.status == payment_service_pb2.ACK_SUCCESS:
+                                logger.info(f"[{correlation_id}] TX[{transaction_id}]: Payment service ACK_SUCCESS for Commit on order {order_id}")
+                                payment_success = True
+                            else:
+                                logger.error(f"[{correlation_id}] TX[{transaction_id}]: Payment service ACK_FAILURE for Commit on order {order_id}. Message: {commit_response.message}. CRITICAL: Manual intervention may be needed.")
+                                # TODO: Implement compensation/rollback for coordinator if payment commit fails after prepare.
+                                # For now, just log and fail the order.
+                        else:  # VOTE_ABORT or other issue
+                            logger.warning(f"[{correlation_id}] TX[{transaction_id}]: Payment service VOTE_ABORT for Prepare on order {order_id}. Message: {prepare_response.message}")
+                            # No explicit Abort message needed to payment_service if it voted Abort.
+                            # If coordinator timed out waiting for Prepare, it might send Abort.
+
+                except grpc.RpcError as e:
+                    logger.error(f"[{correlation_id}] TX[{transaction_id}]: gRPC error during 2PC with payment service for order {order_id}: {e.code()} - {e.details()}")
+                    # If Prepare succeeded but Commit call failed/timed out, this is a dangerous state.
+                    # The coordinator might need to retry Commit or eventually Abort if payment service is unreachable.
+                    # For now, we assume failure.
+                except Exception as e:
+                    logger.error(f"[{correlation_id}] TX[{transaction_id}]: Non-gRPC error during 2PC with payment service for order {order_id}: {e}")
+
+                if payment_success:
+                    logger.info(f"[{correlation_id}] TX[{transaction_id}]: Distributed transaction for order {order_id} successful. Proceeding with local execution.")
+                    
+                    # Simulate local order processing steps (e.g., update inventory, finalize in local DB)
+                    logger.info(f"[{correlation_id}] Order {order_id} is being executed (local steps)...")
+                    time.sleep(0.5) # Simulate local work
+                    logger.info(f"[{correlation_id}] Order {order_id} local execution completed successfully")
+                    
+                    with self.lock:
+                        self.processed_orders += 1
+                else:
+                    logger.error(f"[{correlation_id}] TX[{transaction_id}]: Distributed transaction for order {order_id} FAILED. Order will not be processed.")
+                    # TODO: Handle failed transaction (e.g., notify user, requeue for retry with backoff, move to dead-letter queue)
         
         except Exception as e:
-            logger.error(f"[{correlation_id}] Error processing order: {e}")
-            raise
+            logger.error(f"[{correlation_id}] Error in _process_next_order (outside 2PC block or during dequeue): {e}")
+            # This exception is for errors outside the 2PC block or during dequeue.
+            # If it's a dequeue error, processing_order flag should still be reset.
+            # If it's an error after 2PC, it means local processing failed.
+            # The 'raise' was removed to ensure 'finally' block always runs.
+            # Consider if re-raising is appropriate for some errors.
 
 class OrderExecutorServicer(order_executor_pb2_grpc.OrderExecutorServiceServicer):
     def __init__(self, consensus):
