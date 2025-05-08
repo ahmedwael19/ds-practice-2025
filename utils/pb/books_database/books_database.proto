@@ -1,0 +1,117 @@
+syntax = "proto3";
+
+package books_database;
+
+service BooksDatabaseService {
+    // Reads the value of a book's stock
+    rpc ReadStock(ReadStockRequest) returns (ReadStockResponse);
+    // Writes/sets the value of a book's stock (less common, Decrement is preferred)
+    rpc WriteStock(WriteStockRequest) returns (WriteStockResponse);
+    // Atomically decrements the stock of a book
+    rpc DecrementStock(DecrementStockRequest) returns (DecrementStockResponse);
+
+    // --- Raft related RPCs for this DB service's own Raft group ---
+    // (These can be similar to order_executor's Raft RPCs)
+    rpc RequestVote(DBVoteRequest) returns (DBVoteResponse);
+    rpc AppendEntries(DBAppendEntriesRequest) returns (DBAppendEntriesResponse); // For heartbeats and leader election
+
+    // --- Internal RPC for Primary to replicate data to Backups ---
+    rpc InternalReplicate(InternalReplicateRequest) returns (InternalReplicateResponse);
+
+    // --- Helper to find current leader of this DB Raft group ---
+    rpc GetNodeRole(GetNodeRoleRequest) returns (GetNodeRoleResponse);
+}
+
+// --- Stock Operations ---
+message BookStock {
+    string book_id = 1; // Using book_id as key
+    int32 quantity = 2;
+}
+
+message ReadStockRequest {
+    string book_id = 1;
+}
+
+message ReadStockResponse {
+    string book_id = 1;
+    int32 quantity = 2;
+    bool success = 3;
+    string message = 4; // e.g., "Book not found", "Success"
+}
+
+message WriteStockRequest {
+    string book_id = 1;
+    int32 quantity = 2;
+}
+
+message WriteStockResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message DecrementStockRequest {
+    string book_id = 1;
+    int32 amount_to_decrement = 2;
+}
+
+message DecrementStockResponse {
+    string book_id = 1;
+    int32 new_quantity = 2;
+    bool success = 3; // false if insufficient stock or other errors
+    string message = 4;
+}
+
+// --- Raft related messages for DB ---
+message DBVoteRequest {
+    int32 term = 1;
+    string candidate_id = 2;
+    // Potentially lastLogIndex, lastLogTerm if implementing full Raft log for DB state
+    // For now, focusing on leader election Raft.
+}
+
+message DBVoteResponse {
+    int32 term = 1;
+    bool vote_granted = 2;
+}
+
+message DBLogEntry { // Example if we were replicating ops via Raft log
+    string operation = 1; // "WRITE", "DECREMENT"
+    string book_id = 2;
+    int32 value = 3; // quantity for WRITE, amount for DECREMENT
+}
+
+message DBAppendEntriesRequest {
+    int32 term = 1;
+    string leader_id = 2;
+    // repeated DBLogEntry entries = 3; // For full Raft
+    // int32 prev_log_index = 4;
+    // int32 prev_log_term = 5;
+    // int32 leader_commit = 6;
+}
+
+message DBAppendEntriesResponse {
+    int32 term = 1;
+    bool success = 2;
+}
+
+// --- Internal Replication ---
+message InternalReplicateRequest {
+    string book_id = 1;
+    int32 new_quantity = 2;
+    string operation_id = 3; // For tracking/idempotency if needed
+}
+
+message InternalReplicateResponse {
+    bool success = 1;
+    string node_id = 2;
+}
+
+// --- Node Role ---
+message GetNodeRoleRequest {}
+
+message GetNodeRoleResponse {
+    string node_id = 1;
+    string role = 2; // "leader", "follower", "candidate"
+    int32 term = 3;
+    string leader_id = 4; // Current known leader, empty if unknown
+}

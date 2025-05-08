@@ -105,6 +105,61 @@ services:
     networks:
       - app-network
 
+  # --- Books Database Cluster (3 instances) ---
+  books_database_1:
+    build:
+      context: ./
+      dockerfile: ./books_database/Dockerfile # You'll create this
+    ports:
+      - "50060:50060" # Exposing for potential direct test/debug
+    environment:
+      - PYTHONUNBUFFERED=TRUE
+      - PYTHONFILE=/app/books_database/src/app.py
+      - DB_NODE_ID=db_node_1
+      - DB_NODE_PORT=50060
+      - DB_PEER_ADDRESSES=books_database_2:50061,books_database_3:50062
+    volumes:
+      - ./books_database/src:/app/books_database/src
+      - ./utils:/app/utils
+    networks:
+      - app-network
+
+  books_database_2:
+    build:
+      context: ./
+      dockerfile: ./books_database/Dockerfile
+    ports:
+      - "50061:50061"
+    environment:
+      - PYTHONUNBUFFERED=TRUE
+      - PYTHONFILE=/app/books_database/src/app.py
+      - DB_NODE_ID=db_node_2
+      - DB_NODE_PORT=50061
+      - DB_PEER_ADDRESSES=books_database_1:50060,books_database_3:50062
+    volumes:
+      - ./books_database/src:/app/books_database/src
+      - ./utils:/app/utils
+    networks:
+      - app-network
+
+  books_database_3:
+    build:
+      context: ./
+      dockerfile: ./books_database/Dockerfile
+    ports:
+      - "50062:50062"
+    environment:
+      - PYTHONUNBUFFERED=TRUE
+      - PYTHONFILE=/app/books_database/src/app.py
+      - DB_NODE_ID=db_node_3
+      - DB_NODE_PORT=50062
+      - DB_PEER_ADDRESSES=books_database_1:50060,books_database_2:50061
+    volumes:
+      - ./books_database/src:/app/books_database/src
+      - ./utils:/app/utils
+    networks:
+      - app-network
+
   # First instance in the order executor cluster
   order_executor_1:
     build:
@@ -122,8 +177,12 @@ services:
       - EXECUTOR_PEERS=order_executor_2:50055,order_executor_3:50055
       # Queue service address
       - QUEUE_SERVICE=order_queue:50054
+      - DB_NODE_ADDRESSES=books_database_1:50060,books_database_2:50061,books_database_3:50062
     depends_on:
       - order_queue
+      - books_database_1 # Ensure DBs are *likely* to be up first
+      - books_database_2
+      - books_database_3
     networks:
       - app-network
 
@@ -141,8 +200,12 @@ services:
       - EXECUTOR_ID=executor2
       - EXECUTOR_PEERS=order_executor_1:50055,order_executor_3:50055
       - QUEUE_SERVICE=order_queue:50054
+      - DB_NODE_ADDRESSES=books_database_1:50060,books_database_2:50061,books_database_3:50062
     depends_on:
       - order_queue
+      - books_database_1
+      - books_database_2
+      - books_database_3
     networks:
       - app-network
 
@@ -160,8 +223,12 @@ services:
       - EXECUTOR_ID=executor3
       - EXECUTOR_PEERS=order_executor_1:50055,order_executor_2:50055
       - QUEUE_SERVICE=order_queue:50054
+      - DB_NODE_ADDRESSES=books_database_1:50060,books_database_2:50061,books_database_3:50062
     depends_on:
       - order_queue
+      - books_database_1
+      - books_database_2
+      - books_database_3
     networks:
       - app-network
     
