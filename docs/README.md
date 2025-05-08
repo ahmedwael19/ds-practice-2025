@@ -364,6 +364,9 @@ graph TD;
     OrderExecutor3 --- Note;
 ```
 
+## Vector Diagram
+
+![alt text](vector_diagram.png "Vector Diagram")
 
 ## Cache Clearing with Vector Clock Safety
 
