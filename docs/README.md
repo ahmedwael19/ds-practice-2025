@@ -505,6 +505,107 @@ The Raft leader election algorithm ensures:
 6. Split votes are resolved through randomized timeouts
 7. Network partitions are handled when healed
 
+## Consistency Protocol diagram: 
+The following diagrams illustrate the consistency protocol for the database module which relies heavily on RAFT
+```mermaid
+graph TD
+    subgraph "Order Execution Layer"
+        OE_Leader["Order Executor (Leader Instance)"]
+    end
+
+    subgraph "Books Database Cluster (Replicated Key-Value Store)"
+        direction LR
+        DBP["DB Node 1 (Primary - Raft Leader)"]
+        DBB1["DB Node 2 (Backup - Raft Follower)"]
+        DBB2["DB Node 3 (Backup - Raft Follower)"]
+
+        style DBP fill:#87CEEB,stroke:#333,stroke-width:2px,color:#000
+        style DBB1 fill:#D3D3D3,stroke:#333,stroke-width:2px,color:#000
+        style DBB2 fill:#D3D3D3,stroke:#333,stroke-width:2px,color:#000
+
+        DBP_Store["Local K-V Store (Book Stock)"]
+        DBB1_Store["Local K-V Store (Book Stock)"]
+        DBB2_Store["Local K-V Store (Book Stock)"]
+
+        DBP --- DBP_Store
+        DBB1 --- DBB1_Store
+        DBB2 --- DBB2_Store
+
+        %% Raft Communication for DB Leader Election & Heartbeats
+        DBP <-. "Raft Protocol" .-> DBB1
+        DBP <-. "Raft Protocol" .-> DBB2
+        DBB1 <-. "Raft Protocol" .-> DBB2
+    end
+
+    %% Client (Order Executor) Operations
+    OE_Leader -- "Write Ops (e.g., DecrementStock) <br/> Read Ops (e.g., ReadStock)" --> DBP
+
+    %% Primary to Backup Replication
+    DBP -.->|Internal Data Replication| DBB1
+    DBP -.->|Internal Data Replication| DBB2
+
+    %% Backup to Primary Acknowledgements
+    DBB1 -.->|Replication ACK| DBP
+    DBB2 -.->|Replication ACK| DBP
+
+
+    classDef client fill:#f9f,stroke:#333,stroke-width:2px;
+    class OE_Leader client;
+```
+
+```mermaid
+sequenceDiagram
+    participant OE as "Order Executor (Leader)"
+    participant DBP as "Books DB Primary (Raft Leader)"
+    participant DBB1 as "Books DB Backup 1 (Raft Follower)"
+    participant DBB2 as "Books DB Backup 2 (Raft Follower)"
+
+    Note over DBP and DBB1 and DBB2: Books Database Nodes form a Raft Group for Primary Election
+
+    OE->>DBP: 1. DecrementStockRequest(book_id, amount)
+    activate DBP
+    Note right of DBP: Acquires lock for book_id
+    DBP->>DBP: 2. Applies change locally (datastore[book_id] -= amount)
+
+    par Replicate to Backups
+        DBP->>DBB1: 3a. InternalReplicateRequest(book_id, new_quantity)
+        activate DBB1
+        DBB1->>DBB1: Applies change locally
+        DBB1-->>DBP: 4a. Ack (InternalReplicateResponse)
+        deactivate DBB1
+    and
+        DBP->>DBB2: 3b. InternalReplicateRequest(book_id, new_quantity)
+        activate DBB2
+        DBB2->>DBB2: Applies change locally
+        DBB2-->>DBP: 4b. Ack (InternalReplicateResponse)
+        deactivate DBB2
+    end
+
+    Note right of DBP: Waits for quorum of Acks (including self)
+    Note right of DBP: Releases lock for book_id
+    DBP-->>OE: 5. DecrementStockResponse(success=true, new_quantity)
+    deactivate DBP
+
+    %% Read Operation (Directed to Primary)
+    OE->>DBP: 6. ReadStockRequest(book_id)
+    activate DBP
+    Note right of DBP: (May acquire read lock or use consistent snapshot)
+    DBP->>DBP: 7. Reads from local datastore
+    DBP-->>OE: 8. ReadStockResponse(quantity)
+    deactivate DBP
+
+    %% Raft Heartbeats for DB Cluster (background)
+    loop DB Raft Heartbeats
+        DBP->>DBB1: DBAppendEntriesRequest (Heartbeat)
+        DBB1-->>DBP: DBAppendEntriesResponse
+        DBP->>DBB2: DBAppendEntriesRequest (Heartbeat)
+        DBB2-->>DBP: DBAppendEntriesResponse
+    end
+
+    %% Raft Leader Election (if DBP fails)
+    Note over DBP and DBB1 and DBB2: If DBP fails, backups will hold an election
+```
+
 
 ## Commitment Protocol (2PC)
 The following diagrams illustrate the successful and unsuccesful flow in relation to the commitment protocol.
