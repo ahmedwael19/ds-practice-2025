@@ -128,6 +128,26 @@ class DecrementStockResponse(_message.Message):
     message: str
     def __init__(self, book_id: _Optional[str] = ..., new_quantity: _Optional[int] = ..., success: bool = ..., message: _Optional[str] = ...) -> None: ...
 
+class IncrementStockRequest(_message.Message):
+    __slots__ = ("book_id", "amount_to_increment")
+    BOOK_ID_FIELD_NUMBER: _ClassVar[int]
+    AMOUNT_TO_INCREMENT_FIELD_NUMBER: _ClassVar[int]
+    book_id: str
+    amount_to_increment: int
+    def __init__(self, book_id: _Optional[str] = ..., amount_to_increment: _Optional[int] = ...) -> None: ...
+
+class IncrementStockResponse(_message.Message):
+    __slots__ = ("book_id", "new_quantity", "success", "message")
+    BOOK_ID_FIELD_NUMBER: _ClassVar[int]
+    NEW_QUANTITY_FIELD_NUMBER: _ClassVar[int]
+    SUCCESS_FIELD_NUMBER: _ClassVar[int]
+    MESSAGE_FIELD_NUMBER: _ClassVar[int]
+    book_id: str
+    new_quantity: int
+    success: bool
+    message: str
+    def __init__(self, book_id: _Optional[str] = ..., new_quantity: _Optional[int] = ..., success: bool = ..., message: _Optional[str] = ...) -> None: ...
+
 class DBVoteRequest(_message.Message):
     __slots__ = ("term", "candidate_id")
     TERM_FIELD_NUMBER: _ClassVar[int]

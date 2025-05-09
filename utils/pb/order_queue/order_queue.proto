@@ -19,10 +19,11 @@ service OrderQueueService {
 
 // Item represents a product in an order
 message Item {
-  string name = 1;     // Product name
-  int32 quantity = 2;  // Number of units ordered
+  string book_id = 1;
+  string name = 2;
+  int32 quantity = 3;
+  float price = 4;  
 }
-
 // CreditCardInfo contains payment method details
 message CreditCardInfo {
   string number = 1;          // Credit card number

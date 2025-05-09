@@ -107,6 +107,16 @@ message DecrementStockResponse {
     string message = 4;
 }
 
+message IncrementStockRequest {
+    string book_id = 1;
+    int32 amount_to_increment = 2;
+}
+message IncrementStockResponse {
+    string book_id = 1;
+    int32 new_quantity = 2;
+    bool success = 3;
+    string message = 4;
+}
 // --- Raft related messages for DB ---
 message DBVoteRequest {
     int32 term = 1;
