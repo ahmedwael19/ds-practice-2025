@@ -2,8 +2,8 @@
 """Client and server classes corresponding to protobuf-defined services."""
 import grpc
 
-import books_database_pb2 as books__database__pb2
 
+import books_database_pb2 as books__database_dot_books__database__pb2
 
 class BooksDatabaseServiceStub(object):
     """Missing associated documentation comment in .proto file."""
@@ -16,53 +16,58 @@ class BooksDatabaseServiceStub(object):
         """
         self.ReadStock = channel.unary_unary(
                 '/books_database.BooksDatabaseService/ReadStock',
-                request_serializer=books__database__pb2.ReadStockRequest.SerializeToString,
-                response_deserializer=books__database__pb2.ReadStockResponse.FromString,
+                request_serializer=books__database_dot_books__database__pb2.ReadStockRequest.SerializeToString,
+                response_deserializer=books__database_dot_books__database__pb2.ReadStockResponse.FromString,
                 )
         self.WriteStock = channel.unary_unary(
                 '/books_database.BooksDatabaseService/WriteStock',
-                request_serializer=books__database__pb2.WriteStockRequest.SerializeToString,
-                response_deserializer=books__database__pb2.WriteStockResponse.FromString,
+                request_serializer=books__database_dot_books__database__pb2.WriteStockRequest.SerializeToString,
+                response_deserializer=books__database_dot_books__database__pb2.WriteStockResponse.FromString,
                 )
         self.DecrementStock = channel.unary_unary(
                 '/books_database.BooksDatabaseService/DecrementStock',
-                request_serializer=books__database__pb2.DecrementStockRequest.SerializeToString,
-                response_deserializer=books__database__pb2.DecrementStockResponse.FromString,
+                request_serializer=books__database_dot_books__database__pb2.DecrementStockRequest.SerializeToString,
+                response_deserializer=books__database_dot_books__database__pb2.DecrementStockResponse.FromString,
                 )
-        self.RequestVote = channel.unary_unary(
-                '/books_database.BooksDatabaseService/RequestVote',
-                request_serializer=books__database__pb2.DBVoteRequest.SerializeToString,
-                response_deserializer=books__database__pb2.DBVoteResponse.FromString,
-                )
-        self.AppendEntries = channel.unary_unary(
-                '/books_database.BooksDatabaseService/AppendEntries',
-                request_serializer=books__database__pb2.DBAppendEntriesRequest.SerializeToString,
-                response_deserializer=books__database__pb2.DBAppendEntriesResponse.FromString,
-                )
-        self.InternalReplicate = channel.unary_unary(
-                '/books_database.BooksDatabaseService/InternalReplicate',
-                request_serializer=books__database__pb2.InternalReplicateRequest.SerializeToString,
-                response_deserializer=books__database__pb2.InternalReplicateResponse.FromString,
-                )
-        self.GetNodeRole = channel.unary_unary(
-                '/books_database.BooksDatabaseService/GetNodeRole',
-                request_serializer=books__database__pb2.GetNodeRoleRequest.SerializeToString,
-                response_deserializer=books__database__pb2.GetNodeRoleResponse.FromString,
+        self.IncrementStock = channel.unary_unary(
+                '/books_database.BooksDatabaseService/IncrementStock',
+                request_serializer=books__database_dot_books__database__pb2.IncrementStockRequest.SerializeToString,
+                response_deserializer=books__database_dot_books__database__pb2.IncrementStockResponse.FromString,
                 )
         self.PrepareTransaction = channel.unary_unary(
                 '/books_database.BooksDatabaseService/PrepareTransaction',
-                request_serializer=books__database__pb2.DBPrepareRequest.SerializeToString,
-                response_deserializer=books__database__pb2.DBVoteTransactionResponse.FromString,
+                request_serializer=books__database_dot_books__database__pb2.DBPrepareRequest.SerializeToString,
+                response_deserializer=books__database_dot_books__database__pb2.DBVoteTransactionResponse.FromString,
                 )
         self.CommitTransaction = channel.unary_unary(
                 '/books_database.BooksDatabaseService/CommitTransaction',
-                request_serializer=books__database__pb2.DBTransactionRequest.SerializeToString,
-                response_deserializer=books__database__pb2.DBAckTransactionResponse.FromString,
+                request_serializer=books__database_dot_books__database__pb2.DBTransactionRequest.SerializeToString,
+                response_deserializer=books__database_dot_books__database__pb2.DBAckTransactionResponse.FromString,
                 )
         self.AbortTransaction = channel.unary_unary(
                 '/books_database.BooksDatabaseService/AbortTransaction',
-                request_serializer=books__database__pb2.DBTransactionRequest.SerializeToString,
-                response_deserializer=books__database__pb2.DBAckTransactionResponse.FromString,
+                request_serializer=books__database_dot_books__database__pb2.DBTransactionRequest.SerializeToString,
+                response_deserializer=books__database_dot_books__database__pb2.DBAckTransactionResponse.FromString,
+                )
+        self.RequestVote = channel.unary_unary(
+                '/books_database.BooksDatabaseService/RequestVote',
+                request_serializer=books__database_dot_books__database__pb2.DBVoteRequest.SerializeToString,
+                response_deserializer=books__database_dot_books__database__pb2.DBVoteResponse.FromString,
+                )
+        self.AppendEntries = channel.unary_unary(
+                '/books_database.BooksDatabaseService/AppendEntries',
+                request_serializer=books__database_dot_books__database__pb2.DBAppendEntriesRequest.SerializeToString,
+                response_deserializer=books__database_dot_books__database__pb2.DBAppendEntriesResponse.FromString,
+                )
+        self.InternalReplicate = channel.unary_unary(
+                '/books_database.BooksDatabaseService/InternalReplicate',
+                request_serializer=books__database_dot_books__database__pb2.InternalReplicateRequest.SerializeToString,
+                response_deserializer=books__database_dot_books__database__pb2.InternalReplicateResponse.FromString,
+                )
+        self.GetNodeRole = channel.unary_unary(
+                '/books_database.BooksDatabaseService/GetNodeRole',
+                request_serializer=books__database_dot_books__database__pb2.GetNodeRoleRequest.SerializeToString,
+                response_deserializer=books__database_dot_books__database__pb2.GetNodeRoleResponse.FromString,
                 )
 
 
@@ -77,7 +82,7 @@ class BooksDatabaseServiceServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def WriteStock(self, request, context):
-        """Writes/sets the value of a book's stock (less common, Decrement is preferred)
+        """Writes/sets the value of a book's stock (less common)
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -90,17 +95,41 @@ class BooksDatabaseServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def IncrementStock(self, request, context):
+        """Atomically increments the stock of a book (NEW)
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PrepareTransaction(self, request, context):
+        """--- 2PC Participant RPCs ---
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CommitTransaction(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def AbortTransaction(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def RequestVote(self, request, context):
         """--- Raft related RPCs for this DB service's own Raft group ---
-        (These can be similar to order_executor's Raft RPCs)
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def AppendEntries(self, request, context):
-        """For heartbeats and leader election
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -119,77 +148,63 @@ class BooksDatabaseServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def PrepareTransaction(self, request, context):
-        """--- 2PC Transaction RPCs ---
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def CommitTransaction(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def AbortTransaction(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
 
 def add_BooksDatabaseServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'ReadStock': grpc.unary_unary_rpc_method_handler(
                     servicer.ReadStock,
-                    request_deserializer=books__database__pb2.ReadStockRequest.FromString,
-                    response_serializer=books__database__pb2.ReadStockResponse.SerializeToString,
+                    request_deserializer=books__database_dot_books__database__pb2.ReadStockRequest.FromString,
+                    response_serializer=books__database_dot_books__database__pb2.ReadStockResponse.SerializeToString,
             ),
             'WriteStock': grpc.unary_unary_rpc_method_handler(
                     servicer.WriteStock,
-                    request_deserializer=books__database__pb2.WriteStockRequest.FromString,
-                    response_serializer=books__database__pb2.WriteStockResponse.SerializeToString,
+                    request_deserializer=books__database_dot_books__database__pb2.WriteStockRequest.FromString,
+                    response_serializer=books__database_dot_books__database__pb2.WriteStockResponse.SerializeToString,
             ),
             'DecrementStock': grpc.unary_unary_rpc_method_handler(
                     servicer.DecrementStock,
-                    request_deserializer=books__database__pb2.DecrementStockRequest.FromString,
-                    response_serializer=books__database__pb2.DecrementStockResponse.SerializeToString,
+                    request_deserializer=books__database_dot_books__database__pb2.DecrementStockRequest.FromString,
+                    response_serializer=books__database_dot_books__database__pb2.DecrementStockResponse.SerializeToString,
             ),
-            'RequestVote': grpc.unary_unary_rpc_method_handler(
-                    servicer.RequestVote,
-                    request_deserializer=books__database__pb2.DBVoteRequest.FromString,
-                    response_serializer=books__database__pb2.DBVoteResponse.SerializeToString,
-            ),
-            'AppendEntries': grpc.unary_unary_rpc_method_handler(
-                    servicer.AppendEntries,
-                    request_deserializer=books__database__pb2.DBAppendEntriesRequest.FromString,
-                    response_serializer=books__database__pb2.DBAppendEntriesResponse.SerializeToString,
-            ),
-            'InternalReplicate': grpc.unary_unary_rpc_method_handler(
-                    servicer.InternalReplicate,
-                    request_deserializer=books__database__pb2.InternalReplicateRequest.FromString,
-                    response_serializer=books__database__pb2.InternalReplicateResponse.SerializeToString,
-            ),
-            'GetNodeRole': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetNodeRole,
-                    request_deserializer=books__database__pb2.GetNodeRoleRequest.FromString,
-                    response_serializer=books__database__pb2.GetNodeRoleResponse.SerializeToString,
+            'IncrementStock': grpc.unary_unary_rpc_method_handler(
+                    servicer.IncrementStock,
+                    request_deserializer=books__database_dot_books__database__pb2.IncrementStockRequest.FromString,
+                    response_serializer=books__database_dot_books__database__pb2.IncrementStockResponse.SerializeToString,
             ),
             'PrepareTransaction': grpc.unary_unary_rpc_method_handler(
                     servicer.PrepareTransaction,
-                    request_deserializer=books__database__pb2.DBPrepareRequest.FromString,
-                    response_serializer=books__database__pb2.DBVoteTransactionResponse.SerializeToString,
+                    request_deserializer=books__database_dot_books__database__pb2.DBPrepareRequest.FromString,
+                    response_serializer=books__database_dot_books__database__pb2.DBVoteTransactionResponse.SerializeToString,
             ),
             'CommitTransaction': grpc.unary_unary_rpc_method_handler(
                     servicer.CommitTransaction,
-                    request_deserializer=books__database__pb2.DBTransactionRequest.FromString,
-                    response_serializer=books__database__pb2.DBAckTransactionResponse.SerializeToString,
+                    request_deserializer=books__database_dot_books__database__pb2.DBTransactionRequest.FromString,
+                    response_serializer=books__database_dot_books__database__pb2.DBAckTransactionResponse.SerializeToString,
             ),
             'AbortTransaction': grpc.unary_unary_rpc_method_handler(
                     servicer.AbortTransaction,
-                    request_deserializer=books__database__pb2.DBTransactionRequest.FromString,
-                    response_serializer=books__database__pb2.DBAckTransactionResponse.SerializeToString,
+                    request_deserializer=books__database_dot_books__database__pb2.DBTransactionRequest.FromString,
+                    response_serializer=books__database_dot_books__database__pb2.DBAckTransactionResponse.SerializeToString,
+            ),
+            'RequestVote': grpc.unary_unary_rpc_method_handler(
+                    servicer.RequestVote,
+                    request_deserializer=books__database_dot_books__database__pb2.DBVoteRequest.FromString,
+                    response_serializer=books__database_dot_books__database__pb2.DBVoteResponse.SerializeToString,
+            ),
+            'AppendEntries': grpc.unary_unary_rpc_method_handler(
+                    servicer.AppendEntries,
+                    request_deserializer=books__database_dot_books__database__pb2.DBAppendEntriesRequest.FromString,
+                    response_serializer=books__database_dot_books__database__pb2.DBAppendEntriesResponse.SerializeToString,
+            ),
+            'InternalReplicate': grpc.unary_unary_rpc_method_handler(
+                    servicer.InternalReplicate,
+                    request_deserializer=books__database_dot_books__database__pb2.InternalReplicateRequest.FromString,
+                    response_serializer=books__database_dot_books__database__pb2.InternalReplicateResponse.SerializeToString,
+            ),
+            'GetNodeRole': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetNodeRole,
+                    request_deserializer=books__database_dot_books__database__pb2.GetNodeRoleRequest.FromString,
+                    response_serializer=books__database_dot_books__database__pb2.GetNodeRoleResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -213,8 +228,8 @@ class BooksDatabaseService(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/books_database.BooksDatabaseService/ReadStock',
-            books__database__pb2.ReadStockRequest.SerializeToString,
-            books__database__pb2.ReadStockResponse.FromString,
+            books__database_dot_books__database__pb2.ReadStockRequest.SerializeToString,
+            books__database_dot_books__database__pb2.ReadStockResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -230,8 +245,8 @@ class BooksDatabaseService(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/books_database.BooksDatabaseService/WriteStock',
-            books__database__pb2.WriteStockRequest.SerializeToString,
-            books__database__pb2.WriteStockResponse.FromString,
+            books__database_dot_books__database__pb2.WriteStockRequest.SerializeToString,
+            books__database_dot_books__database__pb2.WriteStockResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -247,13 +262,13 @@ class BooksDatabaseService(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/books_database.BooksDatabaseService/DecrementStock',
-            books__database__pb2.DecrementStockRequest.SerializeToString,
-            books__database__pb2.DecrementStockResponse.FromString,
+            books__database_dot_books__database__pb2.DecrementStockRequest.SerializeToString,
+            books__database_dot_books__database__pb2.DecrementStockResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
     @staticmethod
-    def RequestVote(request,
+    def IncrementStock(request,
             target,
             options=(),
             channel_credentials=None,
@@ -263,60 +278,9 @@ class BooksDatabaseService(object):
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_unary(request, target, '/books_database.BooksDatabaseService/RequestVote',
-            books__database__pb2.DBVoteRequest.SerializeToString,
-            books__database__pb2.DBVoteResponse.FromString,
-            options, channel_credentials,
-            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
-
-    @staticmethod
-    def AppendEntries(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(request, target, '/books_database.BooksDatabaseService/AppendEntries',
-            books__database__pb2.DBAppendEntriesRequest.SerializeToString,
-            books__database__pb2.DBAppendEntriesResponse.FromString,
-            options, channel_credentials,
-            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
-
-    @staticmethod
-    def InternalReplicate(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(request, target, '/books_database.BooksDatabaseService/InternalReplicate',
-            books__database__pb2.InternalReplicateRequest.SerializeToString,
-            books__database__pb2.InternalReplicateResponse.FromString,
-            options, channel_credentials,
-            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
-
-    @staticmethod
-    def GetNodeRole(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(request, target, '/books_database.BooksDatabaseService/GetNodeRole',
-            books__database__pb2.GetNodeRoleRequest.SerializeToString,
-            books__database__pb2.GetNodeRoleResponse.FromString,
+        return grpc.experimental.unary_unary(request, target, '/books_database.BooksDatabaseService/IncrementStock',
+            books__database_dot_books__database__pb2.IncrementStockRequest.SerializeToString,
+            books__database_dot_books__database__pb2.IncrementStockResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -332,8 +296,8 @@ class BooksDatabaseService(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/books_database.BooksDatabaseService/PrepareTransaction',
-            books__database__pb2.DBPrepareRequest.SerializeToString,
-            books__database__pb2.DBVoteTransactionResponse.FromString,
+            books__database_dot_books__database__pb2.DBPrepareRequest.SerializeToString,
+            books__database_dot_books__database__pb2.DBVoteTransactionResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -349,8 +313,8 @@ class BooksDatabaseService(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/books_database.BooksDatabaseService/CommitTransaction',
-            books__database__pb2.DBTransactionRequest.SerializeToString,
-            books__database__pb2.DBAckTransactionResponse.FromString,
+            books__database_dot_books__database__pb2.DBTransactionRequest.SerializeToString,
+            books__database_dot_books__database__pb2.DBAckTransactionResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -366,7 +330,75 @@ class BooksDatabaseService(object):
             timeout=None,
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/books_database.BooksDatabaseService/AbortTransaction',
-            books__database__pb2.DBTransactionRequest.SerializeToString,
-            books__database__pb2.DBAckTransactionResponse.FromString,
+            books__database_dot_books__database__pb2.DBTransactionRequest.SerializeToString,
+            books__database_dot_books__database__pb2.DBAckTransactionResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def RequestVote(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/books_database.BooksDatabaseService/RequestVote',
+            books__database_dot_books__database__pb2.DBVoteRequest.SerializeToString,
+            books__database_dot_books__database__pb2.DBVoteResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def AppendEntries(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/books_database.BooksDatabaseService/AppendEntries',
+            books__database_dot_books__database__pb2.DBAppendEntriesRequest.SerializeToString,
+            books__database_dot_books__database__pb2.DBAppendEntriesResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def InternalReplicate(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/books_database.BooksDatabaseService/InternalReplicate',
+            books__database_dot_books__database__pb2.InternalReplicateRequest.SerializeToString,
+            books__database_dot_books__database__pb2.InternalReplicateResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def GetNodeRole(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/books_database.BooksDatabaseService/GetNodeRole',
+            books__database_dot_books__database__pb2.GetNodeRoleRequest.SerializeToString,
+            books__database_dot_books__database__pb2.GetNodeRoleResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)

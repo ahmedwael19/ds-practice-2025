@@ -230,13 +230,14 @@ class BooksDatabaseServiceServicer(books_database_pb2_grpc.BooksDatabaseServiceS
             "book_103_design_patterns": 15,
             "book_104_domain_driven_design": 3
         }
-        self.key_locks = defaultdict(threading.Lock)
+        self.key_locks = defaultdict(threading.Lock) #if multiple operations  calls or operations within different CommitTransaction calls target the same book_id at the primary, 
+        # they are serialized for that specific book. This prevents race conditions on the stock count for individual books.
         self.pending_replications = {} # op_id -> {count, event, start_time}
         self.replication_lock = threading.Lock()
 
         # For 2PC
         self.active_2pc_transactions = {} # transaction_id -> {"state": "PREPARED", "operations": [...]}
-        self.transactions_lock = threading.Lock() # Lock for active_2pc_transactions
+        self.transactions_lock = threading.Lock() # Lock for active_2pc_transactions . BONUS!
 
         logger.info(f"[{self.node_id}] BooksDatabaseService initialized. Datastore: {self.datastore}")
         self.raft_node.start()
@@ -359,6 +360,55 @@ class BooksDatabaseServiceServicer(books_database_pb2_grpc.BooksDatabaseServiceS
             book_id=request.book_id, new_quantity=new_quantity, success=True, message="Stock decremented and replicated"
         )
 
+
+    def IncrementStock(self, request, context):
+        logger.info(f"[{self.node_id}] IncrementStock request for {request.book_id} by {request.amount_to_increment}")
+        if not self._is_leader():
+            leader_id = self.raft_node.leader_id
+            msg = f"Not the leader. Current leader might be {leader_id}."
+            logger.warning(f"[{self.node_id}] {msg} Role: {self.raft_node.state}")
+            context.abort(grpc.StatusCode.UNAVAILABLE, msg)
+
+        if request.amount_to_increment <= 0:
+            logger.warning(f"[{self.node_id}] IncrementStock failed: amount_to_increment must be positive, got {request.amount_to_increment}")
+            return books_database_pb2.IncrementStockResponse(
+                book_id=request.book_id, success=False, message="Amount to increment must be positive"
+            )
+
+        op_id = str(uuid.uuid4()) # Unique ID for this replication operation
+        new_quantity = -1
+
+        with self.key_locks[request.book_id]:
+            if request.book_id not in self.datastore:
+                # Option 1: Fail if book doesn't exist
+                # logger.warning(f"[{self.node_id}] IncrementStock failed: {request.book_id} not found.")
+                # return books_database_pb2.IncrementStockResponse(
+                #     book_id=request.book_id, success=False, message="Book not found"
+                # )
+                # Option 2: Create the book entry if it doesn't exist (useful for adding new stock)
+                logger.info(f"[{self.node_id}] Book {request.book_id} not found. Initializing stock before increment.")
+                self.datastore[request.book_id] = 0
+            
+            current_quantity = self.datastore[request.book_id]
+            new_quantity = current_quantity + request.amount_to_increment
+            self.datastore[request.book_id] = new_quantity
+            logger.info(f"[{self.node_id}] Locally incremented {request.book_id} from {current_quantity} to {new_quantity}")
+
+            # Replicate to backups
+            success_replication = self._replicate_to_backups(request.book_id, new_quantity, op_id)
+            if not success_replication:
+                # Rollback local change
+                self.datastore[request.book_id] = current_quantity 
+                logger.error(f"[{self.node_id}] Replication failed for IncrementStock on {request.book_id}. Rolled back increment.")
+                return books_database_pb2.IncrementStockResponse(
+                    book_id=request.book_id, new_quantity=current_quantity, success=False, message="Replication to backups failed"
+                )
+
+        logger.info(f"[{self.node_id}] IncrementStock success and replicated for {request.book_id}. New quantity: {new_quantity}")
+        return books_database_pb2.IncrementStockResponse(
+            book_id=request.book_id, new_quantity=new_quantity, success=True, message="Stock incremented and replicated"
+        )
+    
     def _replicate_to_backups(self, book_id, new_quantity, operation_id):
         if not self.peer_addresses:
             logger.info(f"[{self.node_id}] No peers to replicate to. Operation considered successful.")

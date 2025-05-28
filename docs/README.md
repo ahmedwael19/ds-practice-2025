@@ -1,174 +1,203 @@
+
+
 # E-Commerce Checkout System
 
+
 ## Overview
-This project implements a **microservices-based architecture** using **gRPC** and **Flask** to facilitate transaction validation and book recommendation services. The system consists of multiple services communicating over gRPC, with an **Orchestrator API** acting as a central gateway.
+This project implements a **microservices-based architecture** using **gRPC** and **Flask** to facilitate an end-to-end e-commerce checkout process. The system handles initial order validation, fraud detection, book suggestions, and then proceeds to order execution involving a payment service and a replicated book inventory database. Key features include distributed leader election (Raft), a priority order queue, vector clocks for causality in the validation phase, and a Two-Phase Commit (2PC) protocol for distributed transaction integrity during order execution.
 
 ## Services Overview
 
-1. **Frontend**
-   - Provides checkout interface for customers
-   - Submits orders to the orchestrator
-   - Displays order status and book recommendations
+1.  **Frontend**
+    *   Provides checkout interface for customers.
+    *   Submits orders to the Orchestrator.
+    *   Displays order status and (AI-generated) book recommendations.
 
-2. **Orchestrator**
-   - Coordinates the checkout workflow using Flask
-   - Manages vector clocks for causal consistency
-   - Routes events to appropriate services following DAG dependencies
-   - Enqueues approved orders for processing
-   - Returns responses to clients before order fulfillment completes
+2.  **Orchestrator**
+    *   Acts as an API Gateway, receiving checkout requests via Flask.
+    *   Coordinates the initial order validation workflow (transaction verification, fraud detection, suggestions) using a DAG of events and vector clocks for causal consistency.
+    *   Enqueues approved orders into a priority queue for asynchronous processing.
+    *   Returns an initial response to the client once the order is validated and queued, before fulfillment completes.
 
-3. **Transaction Verification**
-   - Validates transaction data integrity
-   - Verifies items and quantities
-   - Checks user data completeness
-   - Validates credit card format and expiration
+3.  **Transaction Verification**
+    *   Validates integrity of transaction data (items, quantities, user data, CC format).
+    *   Participates in the event-driven validation flow managed by the Orchestrator.
 
-4. **Fraud Detection**
-   - Evaluates transactions for potential fraud using AI
-   - Performs OpenAI-powered analysis of user data patterns
-   - Implements confidence-based approval system for AI judgments
-   - Checks credit card velocity (frequency of use) to detect suspicious activity
-   - Falls back to rule-based checks when AI is unavailable
+4.  **Fraud Detection**
+    *   Evaluates transactions for potential fraud.
+    *   Integrates with OpenAI for AI-powered analysis of user and transaction patterns.
+    *   Implements card velocity checks to detect suspicious activity.
+    *   Participates in the event-driven validation flow.
 
-5. **Suggestions**
-   - Provides personalized book recommendations using AI
-   - Leverages OpenAI to generate contextually relevant book suggestions
-   - Analyzes purchased items to generate relevant recommendations
-   - Implements fallback mechanisms for AI service failures
+5.  **Suggestions**
+    *   Provides personalized book recommendations based on items in the cart.
+    *   Leverages OpenAI to generate suggestions.
+    *   Participates in the event-driven validation flow.
 
-6. **Order Queue**
-   - Buffers approved orders for processing
-   - Maintains priority-based order queue with heapq
-   - Provides queue status information
-   - Prioritizes orders based on quantity, shipping method, and gift wrapping status
+6.  **Order Queue**
+    *   A gRPC service that buffers approved orders.
+    *   Implements a priority queue (`heapq`) based on item quantity, shipping method, and gift wrapping status, ensuring high-value or express orders can be processed sooner.
+    *   Provides orders to the Order Executor leader.
 
-7. **Order Executor Cluster**
-   - Three executor instances implementing the Raft Algorithm
-   - Processes orders from the queue when elected as leader
-   - Maintains high availability through redundancy
+7.  **Order Executor Cluster (3 instances)**
+    *   Implements the Raft consensus algorithm for leader election, ensuring only one executor is active in processing orders.
+    *   The elected leader dequeues orders from the Order Queue.
+    *   Acts as the **Coordinator** for the Two-Phase Commit (2PC) protocol for each order.
+    *   Coordinates with the Books Database and Payment Service to ensure atomic commitment of order fulfillment steps (stock update and payment).
 
+8.  **Books Database Cluster (3 instances)**
+    *   A gRPC service managing book inventory (stock count).
+    *   Implemented as a replicated key-value store (`book_id` -> `stock_quantity`).
+    *   Uses the Raft consensus algorithm internally to elect a **Primary** replica.
+    *   Follows a **Primary-Backup replication model** for data consistency:
+        *   All write operations (including `DecrementStock`, `IncrementStock`, and operations within `CommitTransaction`) are directed to the Primary.
+        *   The Primary validates and applies the change locally (under per-key locks for atomicity on specific books).
+        *   The Primary then replicates the change (new value or operation) to all Backup nodes via an `InternalReplicate` RPC.
+        *   It awaits acknowledgment from a quorum of replicas before confirming the operation. This ensures data durability and consistency.
+    *   Reads (`ReadStock`) are also directed to the Primary to ensure strong consistency (reading the latest committed data).
+    *   Acts as a **Participant** in the 2PC protocol coordinated by the Order Executor.
+    *   **Bonus - Atomic Database Operations:** Implements atomic `DecrementStock` and `IncrementStock` RPCs. These operations acquire a lock for the specific `book_id` on the Primary, modify the stock, and then replicate the new state. This abstracts read-modify-write complexity from the client and is crucial for handling concurrent updates safely (see Bonus - Concurrent Writes). The `CommitTransaction` RPC for 2PC effectively uses these atomic decrement principles for each item in an order.
 
+9.  **Payment Service (1 instance)**
+    *   A dummy gRPC service simulating payment processing.
+    *   Acts as a **Participant** in the 2PC protocol.
+    *   Implements `Prepare`, `Commit`, and `Abort` RPCs to interact with the Order Executor coordinator.
 ## System Model
 
 ### Communication Model
-- **Hybrid Communication Pattern**: Synchronous gRPC for service validation steps; asynchronous order processing
-- **Vector Clock Propagation**: All services use vector clocks to track causality between distributed events  
-- **Request Correlation**: Each request is tracked with a unique correlation ID across service boundaries
-- **Service Discovery**: Services locate each other via container names in the Docker network
+*   **Frontend to Orchestrator:** HTTP/JSON.
+*   **Inter-Service (Backend):** gRPC.
+*   **Vector Clock Propagation:** Used during the initial order validation phase (Orchestrator with TV, FD, S) for causal consistency.
+*   **Request Correlation:** Unique Correlation IDs trace requests across services.
+*   **Service Discovery:** Docker container names are used for service resolution within the `app-network`.
 
 ### Architectural Model
-- **Microservices Architecture**: System composed of independent, specialized services
-- **API Gateway Pattern**: Orchestrator coordinates workflow and manages client interaction
-- **Event-Driven Processing**: System follows a directed acyclic graph (DAG) of events with dependencies
-- **Service-Local State**: Each service maintains its own cache of order data
-- **Docker Containerization**: All components run as containers managed by Docker Compose
+*   **Microservices Architecture.**
+*   **API Gateway Pattern (Orchestrator).**
+*   **Event-Driven Validation & Asynchronous Order Execution:** Validation is event-driven; order fulfillment via queue is asynchronous to the client's initial response.
+*   **Distributed Consensus (Raft):** Used for leader election in Order Executor cluster and Books Database cluster (for Primary election).
+*   **Distributed Transactions (2PC):** Used by Order Executor to ensure atomic updates across Payment Service and Books Database.
+*   **Replication (Books Database):** Primary-Backup model with quorum-based acknowledgments.
+*   **Docker Containerization.**
 
 ### Timing Model
-- **Vector Clocks**: Each service maintains a vector clock to track event causality
-- **Event Dependencies**: Events follow a partial ordering determined by the directed acyclic graph
-- **Clock Synchronization**: Services merge vector clocks during communication
-- **Election Timeouts**: Order executors use randomized timeouts (1.5-3 seconds) for election initiation
+*   **Vector Clocks (Validation Phase).**
+*   **Raft Election Timeouts (OE & DB Clusters):** Randomized (1.5-3s).
+*   **Raft Heartbeats (OE & DB Clusters):** Periodic (e.g., 500ms).
+*   **2PC Timeouts:** gRPC call timeouts in Order Executor for Prepare/Commit/Abort phases.
 
 ### Failure Model
-- **Service Not Found Handling**: System checks for missing data/services and handles errors gracefully
-- **Vector Clock Conflict Detection**: System detects vector clock causality violations
-- **Leader Election**: Order executor cluster implements the Raft Algorithm for leader election
-- **Heartbeat Monitoring**: Leaders send periodic heartbeats (every 500ms) to maintain leadership
-- **Graceful AI Degradation**: System continues processing even if AI services fail or return unexpected results
-
+*   **Service Unavailability:** gRPC error handling, retries (e.g., OE discovering DB leader).
+*   **Raft Leader Election:** Handles node failures in OE and DB clusters, electing new leaders.
+*   **2PC Participant Failure:**
+    *   If a participant votes ABORT or fails during Prepare: Coordinator (OE) globally aborts.
+    *   If a participant fails after voting COMMIT but before receiving global decision: Participant is blocked (2PC issue).
+    *   If a participant fails during Commit/Abort ACK: Coordinator logs critical error; potential for inconsistency without advanced recovery.
+*   **2PC Coordinator Failure:**
+    *   If OE leader fails *before* 2PC starts for an order: New OE leader picks up order from queue.
+    *   If OE leader fails *during* 2PC: Blocking problem for participants; new OE leader currently has no mechanism to recover the in-flight transaction state. (Requires persistent coordinator log for full recovery).
 
 ## Project Structure
 
 ```
 project/
 ├── orchestrator/
-│   ├── Dockerfile
-│   └── src/
-│       └── app.py             # API gateway and workflow coordinator
 ├── transaction_verification/
-│   ├── Dockerfile
-│   └── src/
-│       └── app.py             # Transaction validation service
 ├── fraud_detection/
-│   ├── Dockerfile
-│   └── src/
-│       └── app.py             # AI-powered fraud detection service
 ├── suggestions/
-│   ├── Dockerfile
-│   └── src/
-│       └── app.py             # AI-powered book recommendations service
 ├── order_queue/
-│   ├── Dockerfile
-│   └── src/
-│       └── app.py             # Order queue service
 ├── order_executor/
-│   ├── Dockerfile
-│   └── src/
-│       └── app.py             # Order executor with Raft Algorithm
+├── books_database/         # Manages book stock, replicated
+├── payment_service/        # Dummy payment processing
 ├── frontend/
-│   ├── Dockerfile
-│   └── src/
-│       └── index.html         # Checkout form UI
 ├── utils/
-│   └── pb/                    # Protocol buffer definitions
-│       ├── fraud_detection/
-│       │   ├── fraud_detection.proto
-│       │   └── ...
-│       ├── transaction_verification/
-│       │   ├── transaction_verification.proto
-│       │   └── ...
-│       ├── suggestions/
-│       │   ├── suggestions.proto
-│       │   └── ...
-│       ├── order_queue/
-│       │   ├── order_queue.proto
-│       │   └── ...
-│       └── order_executor/
-│           ├── order_executor.proto
-│           └── ...
-├── docker-compose.yaml        # Service orchestration
-└── variables.env              # Environment variables including OpenAI API key
+│   └── pb/
+│       ├── books_database/ # .proto for Books Database
+│       ├── payment_service/ # .proto for Payment Service
+│       └── ...             # Other existing .proto files
+├── docker-compose.yaml
+└── variables.env
 ```
 
-## Service Communication Flow
+## Order Validation & Execution Flow
 
-1. **Initialization Phase**:
-   - Orchestrator receives HTTP checkout request
-   - Generates unique order ID and correlation ID
-   - Initializes all services in parallel with order data
-   - Each service caches data and responds with updated vector clock
-   - Orchestrator merges vector clocks
+1.  **Client (Frontend/Postman) -> Orchestrator:** `POST /checkout`.
+2.  **Orchestrator - Validation Phase (Synchronous for Orchestrator, Asynchronous to Client for overall order):**
+    *   Initializes Transaction Verification, Fraud Detection, Suggestions services (parallel, with vector clocks).
+    *   Executes event flow (a-f) involving these services.
+    *   If all validation steps pass: Order is "Approved" by Orchestrator.
+3.  **Order Processing Phase (Coordinated by Order Executor Leader via 2PC):**
+    *   Orchestrator enqueues approved order. Client receives initial "queued" response.
+    *   OE Leader dequeues order.
+    *   **2PC - Prepare Phase:**
+        *   OE Leader sends `Prepare` to Payment Service.
+        *   OE Leader sends `PrepareTransaction` (with list of stock changes) to Books Database Primary.
+        *   Participants validate and vote COMMIT or ABORT.
+    *   **2PC - Decision & Commit/Abort Phase:**
+        *   If all vote COMMIT: OE Leader sends `Commit` to Payment Service and `CommitTransaction` to Books Database.
+            *   Payment Service executes dummy payment.
+            *   Books Database Primary applies stock changes (atomically per book) and replicates to backups.
+        *   If any vote ABORT: OE Leader sends `Abort` to prepared participants.
+4.  **Order Executor (Leader) -> Order Queue:**
+    *   Asynchronously polls and dequeues an order.
+5.  **Order Executor (Coordinator) - 2PC Distributed Transaction:**
+    *   **Calculates Total Amount:** (Currently based on item quantities and a predefined price map).
+    *   **Constructs DB Operations:** Converts order items into stock decrement operations.
+    *   **Phase 1: Prepare**
+        *   Sends `Prepare(transaction_id, order_id, amount)` to `PaymentService`.
+        *   Sends `PrepareTransaction(transaction_id, db_operations)` to `BooksDatabase` (Primary).
+        *   Waits for VOTE\_COMMIT or VOTE\_ABORT from both.
+    *   **Phase 2: Decision & Commit/Abort**
+        *   If both voted COMMIT: Global decision is COMMIT.
+            *   Sends `Commit(transaction_id)` to `PaymentService`.
+            *   Sends `CommitTransaction(transaction_id)` to `BooksDatabase` (Primary).
+                *   DB Primary applies stock changes locally and replicates to DB Backups (quorum based).
+            *   Waits for ACKs. If all successful, order is fully processed.
+        *   If any participant voted ABORT (or Prepare failed): Global decision is ABORT.
+            *   Sends `Abort(transaction_id)` to participants that were successfully prepared.
+6.  **Cleanup Phase (Orchestrator):**
+    *   After initial validation phase and enqueue, Orchestrator sends final vector clock to TV, FD, S for cache clearing.
 
-2. **Event Execution Phase**:
-   - **Events a & b** (parallel): Verify items and user data
-   - **Events c & d** (parallel, with dependencies):
-     - c (VerifyCreditCardFormat) depends on a completion
-     - d (CheckUserData) depends on b completion
-   - **Event e** (after c & d): Check credit card for fraud
-   - **Event f** (after e): Get AI-generated book suggestions
-   - Each event updates and propagates vector clocks
+## Books Database: Replication & Consistency
 
-3. **Order Processing Phase**:
-   - Orchestrator enqueues approved order in priority queue
-   - Returns response to client immediately after enqueuing
-   - Leader in executor cluster asynchronously dequeues and processes orders
+*   **Replication:** 3 instances (`books_database_1, _2, _3`).
+*   **Consistency Protocol:** Primary-Backup.
+    *   **Primary Election:** Raft consensus is used among the 3 DB nodes to elect one as the Primary.
+    *   **Write Path:** All writes (including `DecrementStock` or operations within `CommitTransaction`) are sent to the DB Primary.
+        1.  Primary validates and applies the change locally (under per-key locks for atomicity on specific books).
+        2.  Primary replicates the change (new value or operation) to all Backup nodes via `InternalReplicate` RPC.
+        3.  Primary waits for acknowledgments from a quorum of nodes (itself + at least one Backup for a 3-node cluster).
+        4.  Once quorum is met, the write is considered durable and successful.
+    *   **Read Path:** Reads (`ReadStock`) are directed to the DB Primary to ensure strong consistency (reading the latest committed data).
+*   **Bonus - Additional DB Operations:**
+    *   `DecrementStock` (and conceptually `IncrementStock`) are implemented as atomic operations on the primary, involving local lock, data update, and then replication. These are used by the `CommitTransaction` phase of 2PC.
+*   **Bonus - Concurrent Writes:**
+    *   Handled by the single Order Executor leader processing orders sequentially from the queue.
+    *   At the Books Database Primary, concurrent requests (e.g., from different 2PC transactions trying to update the same book stock if OE was multi-threaded, or very fast sequential calls from OE) are serialized for a specific `book_id` due to `self.key_locks`.
 
-4. **Cleanup Phase**:
-   - Orchestrator sends final vector clock to all services
-   - Services clear cached order data if vector clock indicates all events are complete
+## Books Database: Replication, Consistency, and Operations
 
-## Priority Queue Implementation
+*   **Replication:** 3 instances with Raft for Primary election.
+*   **Consistency (Primary-Backup):** Writes to Primary, local update, quorum-based replication to Backups, then ACK. Reads from Primary.
+*   **Atomic Operations (`DecrementStock`, `IncrementStock` - Bonus):** The database provides dedicated RPCs for atomically decrementing and incrementing stock for a given `book_id`. These operations are handled by the Primary, which uses internal per-key locks (`threading.Lock`) to serialize access to individual book stock counts. After the local update, the new stock level is replicated to backups with quorum acknowledgment. This mechanism is also used by the `CommitTransaction` phase of 2PC when applying multiple stock changes for an order.
+*   **Handling Concurrent Writes (Bonus):** Concurrent writes to the *same book* are managed effectively:
+    1.  The single `Order Executor` leader processes orders (and thus distinct 2PC transactions) sequentially.
+    2.  If multiple 2PC transactions (or direct `DecrementStock`/`IncrementStock` calls) attempt to modify the *same `book_id`* at the `Books Database Primary` around the same time, the Primary's per-key lock for that `book_id` ensures these modifications are applied serially and atomically, preventing race conditions and maintaining data integrity.
 
-- **Input Factors**:
-  - Item quantity (larger orders get higher priority)
-  - Shipping method (express > priority > standard)
-  - Gift wrapping status (wrapped items get higher priority)
-  
-- **Implementation Details**:
-  - Uses Python's `heapq` for efficient priority management
-  - Thread-safe with locking mechanisms
-  - Includes randomness factor to prevent starvation
-  - Lower priority value = higher processing priority
+## Distributed Commitment: Two-Phase Commit (2PC)
+*   **Coordinator:** The elected `Order Executor` leader.
+*   **Participants:** `PaymentService` and `BooksDatabase` (Primary).
+*   **Flow:** (As described in "Order Validation & Execution Flow")
+*   **Bonus - Failing Participants:**
+    *   **Participant Votes Abort:** If `BooksDatabase` votes ABORT during `PrepareTransaction` (e.g., due to insufficient stock for an item), the `Order Executor` correctly identifies this, makes a global ABORT decision, and instructs the `PaymentService` (if it was prepared) to also abort. The transaction is gracefully rolled back.
+    *   **Participant Timeout/Failure during Prepare:** If a participant fails to respond to a `Prepare` message (e.g., network issue or crash, simulated by `DEADLINE_EXCEEDED`), the `Order Executor` treats this as an implicit ABORT vote from that participant and proceeds to globally abort the transaction, ensuring other prepared participants are also aborted.
+    *   **Participant Failure After Voting Commit (Blocking):** If a participant votes COMMIT in the prepare phase and then crashes before receiving the global decision from the coordinator, it remains in a "prepared" (blocked) state upon restart (assuming it had persistent state, which current dummy services don't fully implement for this scenario). This is a classic 2PC limitation.
+    *   **Participant Failure during Commit/Abort ACK:** If a participant fails to acknowledge a final COMMIT or ABORT message, the coordinator logs a critical error, as the transaction's atomicity might be compromised.
+*   **Bonus - Failing Coordinator (Analysis & Partial Recovery):**
+    *   **Raft for OE Leadership:** The `Order Executor` cluster uses Raft for leader election. If the current OE leader (2PC coordinator) fails, a new leader is elected.
+    *   **Recovery for Queued Orders:** If the OE leader fails *before* it started or completed the 2PC for an order it dequeued (or before dequeuing), the new OE leader can pick up that order from the queue (if the dequeue wasn't "committed" back to the queue state by the failed leader) or simply process new orders.
+    *   **Indeterminate State for In-Flight 2PC:** If the OE leader fails *during* an active 2PC (e.g., after participants have PREPARED but before the global COMMIT/ABORT is sent/acknowledged by all), the participants are left in a blocked state. The newly elected OE leader, in the current implementation, **does not have a mechanism to recover the state of these specific in-flight 2PC transactions** initiated by the failed leader. This is because the 2PC transaction state is held in-memory by the coordinator.
+    *   **Conceptual Solution for Full Coordinator Recovery:** A robust solution requires the OE coordinator to persist its 2PC transaction states (e.g., `(TX_ID, state: PREPARED/COMMITTING/ABORTING, participants_info)`) to a replicated, persistent log (potentially using its own Raft group to manage this log). A new OE leader would consult this log to identify and complete any unfinished transactions. This prevents indefinite blocking of participants and ensures atomicity even across coordinator failures. Protocols like Paxos Commit or variations of 3PC aim to address this blocking problem but are more complex.
 
 ## AI Integration
 
@@ -505,8 +534,7 @@ The Raft leader election algorithm ensures:
 6. Split votes are resolved through randomized timeouts
 7. Network partitions are handled when healed
 
-## Consistency Protocol diagram: 
-The following diagrams illustrate the consistency protocol for the database module which relies heavily on RAFT
+### Consistency Protocol for Books Database
 ```mermaid
 graph TD
     subgraph "Order Execution Layer"
@@ -538,20 +566,16 @@ graph TD
     end
 
     %% Client (Order Executor) Operations
-    OE_Leader -- "Write Ops (e.g., DecrementStock) <br/> Read Ops (e.g., ReadStock)" --> DBP
+    OE_Leader -- "2PC Ops (PrepareTransaction, CommitTransaction, AbortTransaction) <br/> Direct Ops (ReadStock)" --> DBP
 
-    %% Primary to Backup Replication
-    DBP -.->|Internal Data Replication| DBB1
-    DBP -.->|Internal Data Replication| DBB2
-
-    %% Backup to Primary Acknowledgements
-    DBB1 -.->|Replication ACK| DBP
-    DBB2 -.->|Replication ACK| DBP
-
+    %% Primary to Backup Replication (for direct ops & 2PC commit data changes)
+    DBP -.->|Internal Data Replication & Quorum ACK| DBB1
+    DBP -.->|Internal Data Replication & Quorum ACK| DBB2
 
     classDef client fill:#f9f,stroke:#333,stroke-width:2px;
     class OE_Leader client;
 ```
+
 
 ```mermaid
 sequenceDiagram

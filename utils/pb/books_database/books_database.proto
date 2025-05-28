@@ -5,26 +5,27 @@ package books_database;
 service BooksDatabaseService {
     // Reads the value of a book's stock
     rpc ReadStock(ReadStockRequest) returns (ReadStockResponse);
-    // Writes/sets the value of a book's stock (less common, Decrement is preferred)
+    // Writes/sets the value of a book's stock (less common)
     rpc WriteStock(WriteStockRequest) returns (WriteStockResponse);
     // Atomically decrements the stock of a book
     rpc DecrementStock(DecrementStockRequest) returns (DecrementStockResponse);
+    // Atomically increments the stock of a book (NEW)
+    rpc IncrementStock(IncrementStockRequest) returns (IncrementStockResponse);
+
+    // --- 2PC Participant RPCs ---
+    rpc PrepareTransaction(DBPrepareRequest) returns (DBVoteTransactionResponse);
+    rpc CommitTransaction(DBTransactionRequest) returns (DBAckTransactionResponse);
+    rpc AbortTransaction(DBTransactionRequest) returns (DBAckTransactionResponse);
 
     // --- Raft related RPCs for this DB service's own Raft group ---
-    // (These can be similar to order_executor's Raft RPCs)
     rpc RequestVote(DBVoteRequest) returns (DBVoteResponse);
-    rpc AppendEntries(DBAppendEntriesRequest) returns (DBAppendEntriesResponse); // For heartbeats and leader election
+    rpc AppendEntries(DBAppendEntriesRequest) returns (DBAppendEntriesResponse);
 
     // --- Internal RPC for Primary to replicate data to Backups ---
     rpc InternalReplicate(InternalReplicateRequest) returns (InternalReplicateResponse);
 
     // --- Helper to find current leader of this DB Raft group ---
     rpc GetNodeRole(GetNodeRoleRequest) returns (GetNodeRoleResponse);
-
-    // --- 2PC Transaction RPCs ---
-    rpc PrepareTransaction(DBPrepareRequest) returns (DBVoteTransactionResponse);
-    rpc CommitTransaction(DBTransactionRequest) returns (DBAckTransactionResponse);
-    rpc AbortTransaction(DBTransactionRequest) returns (DBAckTransactionResponse);
 }
 
 // --- Enums for 2PC ---
@@ -43,8 +44,7 @@ enum DBAckStatus {
 // --- Messages for 2PC ---
 message BookOperation {
     string book_id = 1;
-    int32 quantity_change = 2; // Negative for decrement, positive for increment (if needed)
-    // Potentially add current_expected_stock for optimistic concurrency control if needed
+    int32 quantity_change = 2; // Positive for increment, negative for decrement in 2PC context
 }
 
 message DBPrepareRequest {

@@ -109,9 +109,9 @@ services:
   books_database_1:
     build:
       context: ./
-      dockerfile: ./books_database/Dockerfile # You'll create this
+      dockerfile: ./books_database/Dockerfile
     ports:
-      - "50060:50060" # Exposing for potential direct test/debug
+      - "50060:50060" 
     environment:
       - PYTHONUNBUFFERED=TRUE
       - PYTHONFILE=/app/books_database/src/app.py
@@ -180,7 +180,7 @@ services:
       - DB_NODE_ADDRESSES=books_database_1:50060,books_database_2:50061,books_database_3:50062
     depends_on:
       - order_queue
-      - books_database_1 # Ensure DBs are *likely* to be up first
+      - books_database_1
       - books_database_2
       - books_database_3
     networks:
