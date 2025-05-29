@@ -16,6 +16,17 @@ import threading
 from concurrent import futures
 from collections import defaultdict
 
+# OpenTelemetry Imports
+from opentelemetry import trace, metrics, context
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+from opentelemetry.sdk.metrics._internal.measurement import Measurement
+
 # --- Protobuf Imports ---
 FILE = __file__ if '__file__' in globals() else os.getenv("PYTHONFILE", "")
 books_database_grpc_path = os.path.abspath(os.path.join(FILE, '../../../utils/pb/books_database'))
@@ -27,6 +38,44 @@ import books_database_pb2_grpc
 # --- Logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("books_database")
+
+# --- OpenTelemetry Setup ---
+SERVICE_NAME = "books-database-service"
+resource = Resource.create({"service.name": SERVICE_NAME})
+
+# Configure TracerProvider
+trace_exporter = OTLPSpanExporter(endpoint="http://observability:4318/v1/traces")
+span_processor = BatchSpanProcessor(trace_exporter)
+tracer_provider = TracerProvider(resource=resource)
+tracer_provider.add_span_processor(span_processor)
+trace.set_tracer_provider(tracer_provider)
+tracer = trace.get_tracer(SERVICE_NAME)
+
+# Configure MeterProvider
+metric_exporter = OTLPMetricExporter(endpoint="http://observability:4318/v1/metrics")
+metric_reader = PeriodicExportingMetricReader(metric_exporter)
+meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+metrics.set_meter_provider(meter_provider)
+meter = metrics.get_meter(SERVICE_NAME)
+
+# Define Metrics (moved to __init__ for proper self binding for gauge)
+books_read_counter = meter.create_counter(
+    name="books_read_total",
+    description="Total number of books read from the database",
+    unit="1"
+)
+books_in_stock_updowncounter = meter.create_up_down_counter(
+    name="books_in_stock",
+    description="Current number of books in stock",
+    unit="1"
+)
+read_stock_latency_histogram = meter.create_histogram(
+    name="read_stock_latency_seconds",
+    description="Latency of ReadStock operations",
+    unit="s"
+)
+
+# --- Raft Constants (can be shared or adapted from order_executor) ---
 
 # --- Raft Constants (can be shared or adapted from order_executor) ---
 FOLLOWER, CANDIDATE, LEADER = "follower", "candidate", "leader"
@@ -242,6 +291,19 @@ class BooksDatabaseServiceServicer(books_database_pb2_grpc.BooksDatabaseServiceS
         logger.info(f"[{self.node_id}] BooksDatabaseService initialized. Datastore: {self.datastore}")
         self.raft_node.start()
 
+        # Define and register asynchronous gauge for active 2PC transactions inside __init__
+        self.active_2pc_transactions_gauge = meter.create_observable_gauge(
+            name="active_2pc_transactions_gauge",
+            callbacks=[self._get_active_2pc_transactions_count],
+            description="Number of active 2PC transactions",
+            unit="1"
+        )
+
+    def _get_active_2pc_transactions_count(self, options):
+        with self.transactions_lock:
+            count = len([tx for tx in self.active_2pc_transactions.values() if tx["state"] == "PREPARED"])
+            yield Measurement(count, {"node_id": self.node_id}, self.active_2pc_transactions_gauge, context.get_current())
+
     def _is_leader(self):
         return self.raft_node.state == LEADER
 
@@ -265,379 +327,414 @@ class BooksDatabaseServiceServicer(books_database_pb2_grpc.BooksDatabaseServiceS
 
     # --- Data operations ---
     def ReadStock(self, request, context):
-        logger.info(f"[{self.node_id}] ReadStock request for {request.book_id}")
-        if not self._is_leader():
-            leader_id = self.raft_node.leader_id
-            msg = f"Not the leader. Current leader might be {leader_id}."
-            logger.warning(f"[{self.node_id}] {msg} Role: {self.raft_node.state}")
-            context.abort(grpc.StatusCode.UNAVAILABLE, msg) # Client should retry with leader hint
-            # return books_database_pb2.ReadStockResponse(success=False, message=msg)
+        with tracer.start_as_current_span("ReadStock") as span:
+            span.set_attribute("book.id", request.book_id)
+            start_time = time.time()
+            logger.info(f"[{self.node_id}] ReadStock request for {request.book_id}")
+            if not self._is_leader():
+                leader_id = self.raft_node.leader_id
+                msg = f"Not the leader. Current leader might be {leader_id}."
+                logger.warning(f"[{self.node_id}] {msg} Role: {self.raft_node.state}")
+                span.set_status(trace.Status(trace.StatusCode.ERROR, description=msg))
+                context.abort(grpc.StatusCode.UNAVAILABLE, msg)
 
-
-        with self.key_locks[request.book_id]: # Reading also needs lock if there are concurrent writes that could change it
-            if request.book_id in self.datastore:
-                qty = self.datastore[request.book_id]
-                logger.info(f"[{self.node_id}] ReadStock success for {request.book_id}: {qty}")
-                return books_database_pb2.ReadStockResponse(
-                    book_id=request.book_id, quantity=qty, success=True, message="Success"
-                )
-            else:
-                logger.warning(f"[{self.node_id}] ReadStock failed for {request.book_id}: Not found")
-                return books_database_pb2.ReadStockResponse(
-                    book_id=request.book_id, success=False, message="Book not found"
-                )
+            with self.key_locks[request.book_id]:
+                if request.book_id in self.datastore:
+                    qty = self.datastore[request.book_id]
+                    logger.info(f"[{self.node_id}] ReadStock success for {request.book_id}: {qty}")
+                    books_read_counter.add(1, {"book_id": request.book_id, "node_id": self.node_id})
+                    read_stock_latency_histogram.record(time.time() - start_time, {"book_id": request.book_id, "node_id": self.node_id})
+                    return books_database_pb2.ReadStockResponse(
+                        book_id=request.book_id, quantity=qty, success=True, message="Success"
+                    )
+                else:
+                    logger.warning(f"[{self.node_id}] ReadStock failed for {request.book_id}: Not found")
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, description="Book not found"))
+                    read_stock_latency_histogram.record(time.time() - start_time, {"book_id": request.book_id, "node_id": self.node_id})
+                    return books_database_pb2.ReadStockResponse(
+                        book_id=request.book_id, success=False, message="Book not found"
+                    )
 
     def WriteStock(self, request, context):
-        logger.info(f"[{self.node_id}] WriteStock request for {request.book_id} to {request.quantity}")
-        if not self._is_leader():
-            leader_id = self.raft_node.leader_id
-            msg = f"Not the leader. Current leader might be {leader_id}."
-            context.abort(grpc.StatusCode.UNAVAILABLE, msg)
+        with tracer.start_as_current_span("WriteStock") as span:
+            span.set_attribute("book.id", request.book_id)
+            span.set_attribute("quantity.new", request.quantity)
+            logger.info(f"[{self.node_id}] WriteStock request for {request.book_id} to {request.quantity}")
+            if not self._is_leader():
+                leader_id = self.raft_node.leader_id
+                msg = f"Not the leader. Current leader might be {leader_id}."
+                span.set_status(trace.Status(trace.StatusCode.ERROR, description=msg))
+                context.abort(grpc.StatusCode.UNAVAILABLE, msg)
 
-        op_id = str(uuid.uuid4())
-        success_replication = False
-        with self.key_locks[request.book_id]:
-            original_quantity = self.datastore.get(request.book_id, None)
-            self.datastore[request.book_id] = request.quantity
-            logger.info(f"[{self.node_id}] Locally updated {request.book_id} to {request.quantity}")
-            
-            success_replication = self._replicate_to_backups(request.book_id, request.quantity, op_id)
-            if not success_replication:
-                # Rollback local change if replication fails
-                if original_quantity is not None:
-                    self.datastore[request.book_id] = original_quantity
-                else: # was a new book
-                    del self.datastore[request.book_id]
-                logger.error(f"[{self.node_id}] Replication failed for WriteStock on {request.book_id}. Rolled back.")
-                return books_database_pb2.WriteStockResponse(success=False, message="Replication to backups failed")
+            op_id = str(uuid.uuid4())
+            success_replication = False
+            with self.key_locks[request.book_id]:
+                original_quantity = self.datastore.get(request.book_id, None)
+                self.datastore[request.book_id] = request.quantity
+                logger.info(f"[{self.node_id}] Locally updated {request.book_id} to {request.quantity}")
+                
+                success_replication = self._replicate_to_backups(request.book_id, request.quantity, op_id)
+                if not success_replication:
+                    if original_quantity is not None:
+                        self.datastore[request.book_id] = original_quantity
+                    else:
+                        del self.datastore[request.book_id]
+                    logger.error(f"[{self.node_id}] Replication failed for WriteStock on {request.book_id}. Rolled back.")
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, description="Replication to backups failed"))
+                    return books_database_pb2.WriteStockResponse(success=False, message="Replication to backups failed")
+                
+                # Update UpDownCounter after successful write/replication
+                if original_quantity is None: # New book added
+                    books_in_stock_updowncounter.add(request.quantity, {"book_id": request.book_id, "node_id": self.node_id})
+                else:
+                    books_in_stock_updowncounter.add(request.quantity - original_quantity, {"book_id": request.book_id, "node_id": self.node_id})
 
-        logger.info(f"[{self.node_id}] WriteStock success and replicated for {request.book_id}")
-        return books_database_pb2.WriteStockResponse(success=True, message="Stock updated and replicated")
+            logger.info(f"[{self.node_id}] WriteStock success and replicated for {request.book_id}")
+            return books_database_pb2.WriteStockResponse(success=True, message="Stock updated and replicated")
 
 
     def DecrementStock(self, request, context):
-        logger.info(f"[{self.node_id}] DecrementStock request for {request.book_id} by {request.amount_to_decrement}")
-        if not self._is_leader():
-            leader_id = self.raft_node.leader_id
-            msg = f"Not the leader. Current leader might be {leader_id}."
-            context.abort(grpc.StatusCode.UNAVAILABLE, msg) # Client should retry
+        with tracer.start_as_current_span("DecrementStock") as span:
+            span.set_attribute("book.id", request.book_id)
+            span.set_attribute("amount.decrement", request.amount_to_decrement)
+            logger.info(f"[{self.node_id}] DecrementStock request for {request.book_id} by {request.amount_to_decrement}")
+            if not self._is_leader():
+                leader_id = self.raft_node.leader_id
+                msg = f"Not the leader. Current leader might be {leader_id}."
+                span.set_status(trace.Status(trace.StatusCode.ERROR, description=msg))
+                context.abort(grpc.StatusCode.UNAVAILABLE, msg)
 
-        op_id = str(uuid.uuid4())
-        new_quantity = -1
-        success_replication = False
+            op_id = str(uuid.uuid4())
+            new_quantity = -1
+            success_replication = False
 
-        with self.key_locks[request.book_id]:
-            if request.book_id not in self.datastore:
-                logger.warning(f"[{self.node_id}] DecrementStock failed: {request.book_id} not found.")
-                return books_database_pb2.DecrementStockResponse(
-                    book_id=request.book_id, success=False, message="Book not found"
-                )
+            with self.key_locks[request.book_id]:
+                if request.book_id not in self.datastore:
+                    logger.warning(f"[{self.node_id}] DecrementStock failed: {request.book_id} not found.")
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, description="Book not found"))
+                    return books_database_pb2.DecrementStockResponse(
+                        book_id=request.book_id, success=False, message="Book not found"
+                    )
 
-            current_quantity = self.datastore[request.book_id]
-            if current_quantity < request.amount_to_decrement:
-                logger.warning(f"[{self.node_id}] DecrementStock failed: Insufficient stock for {request.book_id}. Has {current_quantity}, needs {request.amount_to_decrement}")
-                return books_database_pb2.DecrementStockResponse(
-                    book_id=request.book_id, new_quantity=current_quantity, success=False, message="Insufficient stock"
-                )
+                current_quantity = self.datastore[request.book_id]
+                if current_quantity < request.amount_to_decrement:
+                    logger.warning(f"[{self.node_id}] DecrementStock failed: Insufficient stock for {request.book_id}. Has {current_quantity}, needs {request.amount_to_decrement}")
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, description="Insufficient stock"))
+                    return books_database_pb2.DecrementStockResponse(
+                        book_id=request.book_id, new_quantity=current_quantity, success=False, message="Insufficient stock"
+                    )
 
-            # Apply locally first
-            new_quantity = current_quantity - request.amount_to_decrement
-            self.datastore[request.book_id] = new_quantity
-            logger.info(f"[{self.node_id}] Locally decremented {request.book_id} to {new_quantity}")
+                new_quantity = current_quantity - request.amount_to_decrement
+                self.datastore[request.book_id] = new_quantity
+                logger.info(f"[{self.node_id}] Locally decremented {request.book_id} to {new_quantity}")
 
-            # Replicate to backups
-            success_replication = self._replicate_to_backups(request.book_id, new_quantity, op_id)
-            if not success_replication:
-                # Rollback local change
-                self.datastore[request.book_id] = current_quantity 
-                logger.error(f"[{self.node_id}] Replication failed for {request.book_id}. Rolled back decrement.")
-                return books_database_pb2.DecrementStockResponse(
-                    book_id=request.book_id, new_quantity=current_quantity, success=False, message="Replication to backups failed"
-                )
+                success_replication = self._replicate_to_backups(request.book_id, new_quantity, op_id)
+                if not success_replication:
+                    self.datastore[request.book_id] = current_quantity 
+                    logger.error(f"[{self.node_id}] Replication failed for {request.book_id}. Rolled back decrement.")
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, description="Replication to backups failed"))
+                    return books_database_pb2.DecrementStockResponse(
+                        book_id=request.book_id, new_quantity=current_quantity, success=False, message="Replication to backups failed"
+                    )
+                
+                books_in_stock_updowncounter.add(-request.amount_to_decrement, {"book_id": request.book_id, "node_id": self.node_id})
 
-        logger.info(f"[{self.node_id}] DecrementStock success and replicated for {request.book_id}. New quantity: {new_quantity}")
-        return books_database_pb2.DecrementStockResponse(
-            book_id=request.book_id, new_quantity=new_quantity, success=True, message="Stock decremented and replicated"
-        )
+            logger.info(f"[{self.node_id}] DecrementStock success and replicated for {request.book_id}. New quantity: {new_quantity}")
+            return books_database_pb2.DecrementStockResponse(
+                book_id=request.book_id, new_quantity=new_quantity, success=True, message="Stock decremented and replicated"
+            )
 
 
     def IncrementStock(self, request, context):
-        logger.info(f"[{self.node_id}] IncrementStock request for {request.book_id} by {request.amount_to_increment}")
-        if not self._is_leader():
-            leader_id = self.raft_node.leader_id
-            msg = f"Not the leader. Current leader might be {leader_id}."
-            logger.warning(f"[{self.node_id}] {msg} Role: {self.raft_node.state}")
-            context.abort(grpc.StatusCode.UNAVAILABLE, msg)
+        with tracer.start_as_current_span("IncrementStock") as span:
+            span.set_attribute("book.id", request.book_id)
+            span.set_attribute("amount.increment", request.amount_to_increment)
+            logger.info(f"[{self.node_id}] IncrementStock request for {request.book_id} by {request.amount_to_increment}")
+            if not self._is_leader():
+                leader_id = self.raft_node.leader_id
+                msg = f"Not the leader. Current leader might be {leader_id}."
+                logger.warning(f"[{self.node_id}] {msg} Role: {self.raft_node.state}")
+                span.set_status(trace.Status(trace.StatusCode.ERROR, description=msg))
+                context.abort(grpc.StatusCode.UNAVAILABLE, msg)
 
-        if request.amount_to_increment <= 0:
-            logger.warning(f"[{self.node_id}] IncrementStock failed: amount_to_increment must be positive, got {request.amount_to_increment}")
-            return books_database_pb2.IncrementStockResponse(
-                book_id=request.book_id, success=False, message="Amount to increment must be positive"
-            )
-
-        op_id = str(uuid.uuid4()) # Unique ID for this replication operation
-        new_quantity = -1
-
-        with self.key_locks[request.book_id]:
-            if request.book_id not in self.datastore:
-                # Option 1: Fail if book doesn't exist
-                # logger.warning(f"[{self.node_id}] IncrementStock failed: {request.book_id} not found.")
-                # return books_database_pb2.IncrementStockResponse(
-                #     book_id=request.book_id, success=False, message="Book not found"
-                # )
-                # Option 2: Create the book entry if it doesn't exist (useful for adding new stock)
-                logger.info(f"[{self.node_id}] Book {request.book_id} not found. Initializing stock before increment.")
-                self.datastore[request.book_id] = 0
-            
-            current_quantity = self.datastore[request.book_id]
-            new_quantity = current_quantity + request.amount_to_increment
-            self.datastore[request.book_id] = new_quantity
-            logger.info(f"[{self.node_id}] Locally incremented {request.book_id} from {current_quantity} to {new_quantity}")
-
-            # Replicate to backups
-            success_replication = self._replicate_to_backups(request.book_id, new_quantity, op_id)
-            if not success_replication:
-                # Rollback local change
-                self.datastore[request.book_id] = current_quantity 
-                logger.error(f"[{self.node_id}] Replication failed for IncrementStock on {request.book_id}. Rolled back increment.")
+            if request.amount_to_increment <= 0:
+                logger.warning(f"[{self.node_id}] IncrementStock failed: amount_to_increment must be positive, got {request.amount_to_increment}")
+                span.set_status(trace.Status(trace.StatusCode.ERROR, description="Amount to increment must be positive"))
                 return books_database_pb2.IncrementStockResponse(
-                    book_id=request.book_id, new_quantity=current_quantity, success=False, message="Replication to backups failed"
+                    book_id=request.book_id, success=False, message="Amount to increment must be positive"
                 )
 
-        logger.info(f"[{self.node_id}] IncrementStock success and replicated for {request.book_id}. New quantity: {new_quantity}")
-        return books_database_pb2.IncrementStockResponse(
-            book_id=request.book_id, new_quantity=new_quantity, success=True, message="Stock incremented and replicated"
-        )
+            op_id = str(uuid.uuid4())
+            new_quantity = -1
+
+            with self.key_locks[request.book_id]:
+                if request.book_id not in self.datastore:
+                    logger.info(f"[{self.node_id}] Book {request.book_id} not found. Initializing stock before increment.")
+                    self.datastore[request.book_id] = 0
+                
+                current_quantity = self.datastore[request.book_id]
+                new_quantity = current_quantity + request.amount_to_increment
+                self.datastore[request.book_id] = new_quantity
+                logger.info(f"[{self.node_id}] Locally incremented {request.book_id} from {current_quantity} to {new_quantity}")
+
+                success_replication = self._replicate_to_backups(request.book_id, new_quantity, op_id)
+                if not success_replication:
+                    self.datastore[request.book_id] = current_quantity 
+                    logger.error(f"[{self.node_id}] Replication failed for IncrementStock on {request.book_id}. Rolled back increment.")
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, description="Replication to backups failed"))
+                    return books_database_pb2.IncrementStockResponse(
+                        book_id=request.book_id, new_quantity=current_quantity, success=False, message="Replication to backups failed"
+                    )
+                
+                books_in_stock_updowncounter.add(request.amount_to_increment, {"book_id": request.book_id, "node_id": self.node_id})
+
+            logger.info(f"[{self.node_id}] IncrementStock success and replicated for {request.book_id}. New quantity: {new_quantity}")
+            return books_database_pb2.IncrementStockResponse(
+                book_id=request.book_id, new_quantity=new_quantity, success=True, message="Stock incremented and replicated"
+            )
     
     def _replicate_to_backups(self, book_id, new_quantity, operation_id):
-        if not self.peer_addresses:
-            logger.info(f"[{self.node_id}] No peers to replicate to. Operation considered successful.")
-            return True # Standalone mode
+        with tracer.start_as_current_span("ReplicateToBackups") as span:
+            span.set_attribute("book.id", book_id)
+            span.set_attribute("quantity.new", new_quantity)
+            span.set_attribute("operation.id", operation_id)
 
-        num_peers = len(self.peer_addresses)
-        # Quorum includes the leader itself. So, leader + (num_peers / 2) for odd total, or leader + (num_peers / 2 -1) for even total if leader is first.
-        # Simpler: majority of total nodes. Total nodes = num_peers + 1. Quorum = (num_peers + 1) // 2 + 1.
-        # ACKs needed from backups = quorum_size - 1 (leader is one ack)
-        quorum_size = (num_peers + 1) // 2 + 1
-        acks_needed_from_backups = quorum_size -1
-        
-        if acks_needed_from_backups <= 0: # Only leader, or leader + 1 backup where leader is majority
-             logger.info(f"[{self.node_id}] Quorum met by leader alone or with one backup where leader's ack is enough. Op_id: {operation_id}")
-             return True
+            if not self.peer_addresses:
+                logger.info(f"[{self.node_id}] No peers to replicate to. Operation considered successful.")
+                return True
+
+            num_peers = len(self.peer_addresses)
+            quorum_size = (num_peers + 1) // 2 + 1
+            acks_needed_from_backups = quorum_size -1
+            
+            if acks_needed_from_backups <= 0:
+                 logger.info(f"[{self.node_id}] Quorum met by leader alone or with one backup where leader's ack is enough. Op_id: {operation_id}")
+                 return True
 
 
-        replication_event = threading.Event()
-        with self.replication_lock:
-            self.pending_replications[operation_id] = {
-                "acks_received": 0, # From backups
-                "event": replication_event,
-                "start_time": time.time()
-            }
+            replication_event = threading.Event()
+            with self.replication_lock:
+                self.pending_replications[operation_id] = {
+                    "acks_received": 0,
+                    "event": replication_event,
+                    "start_time": time.time()
+                }
 
-        logger.info(f"[{self.node_id}] Replicating op_id {operation_id} for {book_id} to {new_quantity}. Need {acks_needed_from_backups} acks from {num_peers} peers.")
+            logger.info(f"[{self.node_id}] Replicating op_id {operation_id} for {book_id} to {new_quantity}. Need {acks_needed_from_backups} acks from {num_peers} peers.")
+            span.set_attribute("replication.acks_needed", acks_needed_from_backups)
 
-        for peer_addr in self.peer_addresses:
-            threading.Thread(target=self._send_internal_replicate_to_peer, 
-                             args=(peer_addr, book_id, new_quantity, operation_id)).start()
-        
-        # Wait for quorum or timeout
-        # Timeout should be less than client RPC timeout. E.g. 2 seconds.
-        success = replication_event.wait(timeout=2.0) 
+            for peer_addr in self.peer_addresses:
+                threading.Thread(target=self._send_internal_replicate_to_peer, 
+                                 args=(peer_addr, book_id, new_quantity, operation_id)).start()
+            
+            success = replication_event.wait(timeout=2.0) 
 
-        with self.replication_lock:
-            details = self.pending_replications.pop(operation_id, None) # Clean up
+            with self.replication_lock:
+                details = self.pending_replications.pop(operation_id, None)
 
-        if success:
-            logger.info(f"[{self.node_id}] Replication successful for op_id {operation_id}. Acks: {details['acks_received'] if details else 'N/A'}")
-            return True
-        else:
-            logger.error(f"[{self.node_id}] Replication timed out or failed for op_id {operation_id}. Acks: {details['acks_received'] if details else 'N/A'}")
-            return False
+            if success:
+                logger.info(f"[{self.node_id}] Replication successful for op_id {operation_id}. Acks: {details['acks_received'] if details else 'N/A'}")
+                return True
+            else:
+                logger.error(f"[{self.node_id}] Replication timed out or failed for op_id {operation_id}. Acks: {details['acks_received'] if details else 'N/A'}")
+                span.set_status(trace.Status(trace.StatusCode.ERROR, description="Replication timed out or failed"))
+                return False
 
 
     def _send_internal_replicate_to_peer(self, peer_addr, book_id, new_quantity, operation_id):
-        try:
-            with grpc.insecure_channel(peer_addr) as channel:
-                stub = books_database_pb2_grpc.BooksDatabaseServiceStub(channel)
-                req = books_database_pb2.InternalReplicateRequest(
-                    book_id=book_id, new_quantity=new_quantity, operation_id=operation_id
-                )
-                logger.debug(f"[{self.node_id}] Sending InternalReplicate to {peer_addr} for op {operation_id}")
-                resp = stub.InternalReplicate(req, timeout=1.0) # Short timeout for internal replication
+        with tracer.start_as_current_span("SendInternalReplicateToPeer") as span:
+            span.set_attribute("peer.address", peer_addr)
+            span.set_attribute("book.id", book_id)
+            span.set_attribute("operation.id", operation_id)
+            try:
+                with grpc.insecure_channel(peer_addr) as channel:
+                    stub = books_database_pb2_grpc.BooksDatabaseServiceStub(channel)
+                    req = books_database_pb2.InternalReplicateRequest(
+                        book_id=book_id, new_quantity=new_quantity, operation_id=operation_id
+                    )
+                    logger.debug(f"[{self.node_id}] Sending InternalReplicate to {peer_addr} for op {operation_id}")
+                    resp = stub.InternalReplicate(req, timeout=1.0)
 
-                if resp.success:
-                    with self.replication_lock:
-                        if operation_id in self.pending_replications:
-                            self.pending_replications[operation_id]["acks_received"] += 1
-                            logger.info(f"[{self.node_id}] ACK for op {operation_id} from {resp.node_id}. Total acks: {self.pending_replications[operation_id]['acks_received']}")
-                            
-                            num_peers = len(self.peer_addresses)
-                            quorum_size = (num_peers + 1) // 2 + 1
-                            acks_needed_from_backups = quorum_size -1
-                            if acks_needed_from_backups <=0 : acks_needed_from_backups = 0 # if only one node or two nodes
+                    if resp.success:
+                        with self.replication_lock:
+                            if operation_id in self.pending_replications:
+                                self.pending_replications[operation_id]["acks_received"] += 1
+                                logger.info(f"[{self.node_id}] ACK for op {operation_id} from {resp.node_id}. Total acks: {self.pending_replications[operation_id]['acks_received']}")
+                                
+                                num_peers = len(self.peer_addresses)
+                                quorum_size = (num_peers + 1) // 2 + 1
+                                acks_needed_from_backups = quorum_size -1
+                                if acks_needed_from_backups <=0 : acks_needed_from_backups = 0
 
-                            if self.pending_replications[operation_id]["acks_received"] >= acks_needed_from_backups:
-                                self.pending_replications[operation_id]["event"].set()
-        except Exception as e:
-            logger.error(f"[{self.node_id}] Failed to send InternalReplicate to {peer_addr} for op {operation_id}: {e}")
+                                if self.pending_replications[operation_id]["acks_received"] >= acks_needed_from_backups:
+                                    self.pending_replications[operation_id]["event"].set()
+                    else:
+                        span.set_status(trace.Status(trace.StatusCode.ERROR, description="InternalReplicate failed on peer"))
+            except Exception as e:
+                logger.error(f"[{self.node_id}] Failed to send InternalReplicate to {peer_addr} for op {operation_id}: {e}")
+                span.set_status(trace.Status(trace.StatusCode.ERROR, description=f"RPC failed: {e}"))
 
 
     def InternalReplicate(self, request, context):
-        # This is called on Backup nodes by the Primary
-        logger.info(f"[{self.node_id}] Received InternalReplicate for {request.book_id} to {request.new_quantity} (op: {request.operation_id})")
-        with self.key_locks[request.book_id]:
-            self.datastore[request.book_id] = request.new_quantity
-        logger.info(f"[{self.node_id}] Applied replicated data for {request.book_id}. New quantity: {self.datastore[request.book_id]}")
-        return books_database_pb2.InternalReplicateResponse(success=True, node_id=self.node_id)
+        with tracer.start_as_current_span("InternalReplicate") as span:
+            span.set_attribute("book.id", request.book_id)
+            span.set_attribute("quantity.new", request.new_quantity)
+            span.set_attribute("operation.id", request.operation_id)
+            logger.info(f"[{self.node_id}] Received InternalReplicate for {request.book_id} to {request.new_quantity} (op: {request.operation_id})")
+            with self.key_locks[request.book_id]:
+                self.datastore[request.book_id] = request.new_quantity
+                books_in_stock_updowncounter.set(self.datastore[request.book_id], {"book_id": request.book_id, "node_id": self.node_id})
+            logger.info(f"[{self.node_id}] Applied replicated data for {request.book_id}. New quantity: {self.datastore[request.book_id]}")
+            return books_database_pb2.InternalReplicateResponse(success=True, node_id=self.node_id)
 
     # --- 2PC Transaction Methods ---
     def PrepareTransaction(self, request, context):
-        transaction_id = request.transaction_id
-        logger.info(f"[{self.node_id}] PrepareTransaction received for TX_ID: {transaction_id}")
+        with tracer.start_as_current_span("PrepareTransaction") as span:
+            transaction_id = request.transaction_id
+            span.set_attribute("transaction.id", transaction_id)
+            logger.info(f"[{self.node_id}] PrepareTransaction received for TX_ID: {transaction_id}")
 
-        if not self._is_leader():
-            leader_id = self.raft_node.leader_id
-            msg = f"Not the leader. Current leader for DB Raft group might be {leader_id}."
-            logger.warning(f"[{self.node_id}] {msg} Role: {self.raft_node.state}")
-            # Return VOTE_ABORT as this node cannot coordinate the prepare.
-            # Client (order_executor) should ideally route 2PC ops to the DB leader.
-            # For now, we'll assume order_executor might not know DB leader and any node can be hit.
-            return books_database_pb2.DBVoteTransactionResponse(
-                transaction_id=transaction_id,
-                vote=books_database_pb2.DB_VOTE_ABORT,
-                message=msg
-            )
+            if not self._is_leader():
+                leader_id = self.raft_node.leader_id
+                msg = f"Not the leader. Current leader for DB Raft group might be {leader_id}."
+                logger.warning(f"[{self.node_id}] {msg} Role: {self.raft_node.state}")
+                span.set_status(trace.Status(trace.StatusCode.ERROR, description=msg))
+                return books_database_pb2.DBVoteTransactionResponse(
+                    transaction_id=transaction_id,
+                    vote=books_database_pb2.DB_VOTE_ABORT,
+                    message=msg
+                )
 
-        with self.transactions_lock:
-            if transaction_id in self.active_2pc_transactions:
-                # Handle retries: if already prepared and matches, vote commit. If state is different, could be an issue.
-                if self.active_2pc_transactions[transaction_id]["state"] == "PREPARED":
-                     logger.warning(f"[{self.node_id}] TX_ID: {transaction_id} already prepared. Voting COMMIT again.")
-                     return books_database_pb2.DBVoteTransactionResponse(transaction_id=transaction_id, vote=books_database_pb2.DB_VOTE_COMMIT, message="Already prepared")
-                else: # COMMITTED or ABORTED
-                     logger.error(f"[{self.node_id}] TX_ID: {transaction_id} in terminal state {self.active_2pc_transactions[transaction_id]['state']}. Voting ABORT.")
-                     return books_database_pb2.DBVoteTransactionResponse(transaction_id=transaction_id, vote=books_database_pb2.DB_VOTE_ABORT, message="Transaction in terminal state")
+            with self.transactions_lock:
+                if transaction_id in self.active_2pc_transactions:
+                    if self.active_2pc_transactions[transaction_id]["state"] == "PREPARED":
+                         logger.warning(f"[{self.node_id}] TX_ID: {transaction_id} already prepared. Voting COMMIT again.")
+                         span.set_attribute("transaction.state", "PREPARED")
+                         return books_database_pb2.DBVoteTransactionResponse(transaction_id=transaction_id, vote=books_database_pb2.DB_VOTE_COMMIT, message="Already prepared")
+                    else:
+                         logger.error(f"[{self.node_id}] TX_ID: {transaction_id} in terminal state {self.active_2pc_transactions[transaction_id]['state']}. Voting ABORT.")
+                         span.set_status(trace.Status(trace.StatusCode.ERROR, description="Transaction in terminal state"))
+                         return books_database_pb2.DBVoteTransactionResponse(transaction_id=transaction_id, vote=books_database_pb2.DB_VOTE_ABORT, message="Transaction in terminal state")
 
-            # Validate all operations
-            for op in request.operations:
-                with self.key_locks[op.book_id]: # Ensure consistent view during check
-                    current_quantity = self.datastore.get(op.book_id, None)
-                    if current_quantity is None:
-                        logger.warning(f"[{self.node_id}] TX_ID: {transaction_id} Prepare ABORT: Book {op.book_id} not found.")
-                        return books_database_pb2.DBVoteTransactionResponse(transaction_id=transaction_id, vote=books_database_pb2.DB_VOTE_ABORT, message=f"Book {op.book_id} not found")
-                    
-                    if op.quantity_change < 0: # Decrement
-                        if current_quantity < abs(op.quantity_change):
-                            logger.warning(f"[{self.node_id}] TX_ID: {transaction_id} Prepare ABORT: Insufficient stock for {op.book_id}. Has {current_quantity}, needs {abs(op.quantity_change)}")
-                            return books_database_pb2.DBVoteTransactionResponse(transaction_id=transaction_id, vote=books_database_pb2.DB_VOTE_ABORT, message=f"Insufficient stock for {op.book_id}")
-                    # Add checks for other op types if any (e.g. positive quantity_change for increment)
+                for op in request.operations:
+                    with self.key_locks[op.book_id]:
+                        current_quantity = self.datastore.get(op.book_id, None)
+                        if current_quantity is None:
+                            logger.warning(f"[{self.node_id}] TX_ID: {transaction_id} Prepare ABORT: Book {op.book_id} not found.")
+                            span.set_status(trace.Status(trace.StatusCode.ERROR, description=f"Book {op.book_id} not found"))
+                            return books_database_pb2.DBVoteTransactionResponse(transaction_id=transaction_id, vote=books_database_pb2.DB_VOTE_ABORT, message=f"Book {op.book_id} not found")
+                        
+                        if op.quantity_change < 0:
+                            if current_quantity < abs(op.quantity_change):
+                                logger.warning(f"[{self.node_id}] TX_ID: {transaction_id} Prepare ABORT: Insufficient stock for {op.book_id}. Has {current_quantity}, needs {abs(op.quantity_change)}")
+                                span.set_status(trace.Status(trace.StatusCode.ERROR, description=f"Insufficient stock for {op.book_id}"))
+                                return books_database_pb2.DBVoteTransactionResponse(transaction_id=transaction_id, vote=books_database_pb2.DB_VOTE_ABORT, message=f"Insufficient stock for {op.book_id}")
 
-            # All checks passed, stage the transaction
-            self.active_2pc_transactions[transaction_id] = {
-                "state": "PREPARED",
-                "operations": request.operations
-            }
-            logger.info(f"[{self.node_id}] TX_ID: {transaction_id} PREPARED. Voting COMMIT.")
-            return books_database_pb2.DBVoteTransactionResponse(transaction_id=transaction_id, vote=books_database_pb2.DB_VOTE_COMMIT, message="Prepared successfully")
+                self.active_2pc_transactions[transaction_id] = {
+                    "state": "PREPARED",
+                    "operations": request.operations
+                }
+                logger.info(f"[{self.node_id}] TX_ID: {transaction_id} PREPARED. Voting COMMIT.")
+                span.set_attribute("transaction.state", "PREPARED")
+                return books_database_pb2.DBVoteTransactionResponse(transaction_id=transaction_id, vote=books_database_pb2.DB_VOTE_COMMIT, message="Prepared successfully")
 
     def CommitTransaction(self, request, context):
-        transaction_id = request.transaction_id
-        logger.info(f"[{self.node_id}] CommitTransaction received for TX_ID: {transaction_id}")
+        with tracer.start_as_current_span("CommitTransaction") as span:
+            transaction_id = request.transaction_id
+            span.set_attribute("transaction.id", transaction_id)
+            logger.info(f"[{self.node_id}] CommitTransaction received for TX_ID: {transaction_id}")
 
-        if not self._is_leader():
-            # This is a more critical issue if a non-leader receives a commit.
-            # The coordinator should have ensured Prepare was acked by the leader.
-            msg = "Not the leader. Cannot process Commit."
-            logger.error(f"[{self.node_id}] {msg} Role: {self.raft_node.state}")
-            return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_FAILURE, message=msg)
+            if not self._is_leader():
+                msg = "Not the leader. Cannot process Commit."
+                logger.error(f"[{self.node_id}] {msg} Role: {self.raft_node.state}")
+                span.set_status(trace.Status(trace.StatusCode.ERROR, description=msg))
+                return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_FAILURE, message=msg)
 
-        with self.transactions_lock:
-            if transaction_id not in self.active_2pc_transactions or self.active_2pc_transactions[transaction_id]["state"] != "PREPARED":
-                current_state = self.active_2pc_transactions.get(transaction_id, {}).get("state", "NOT_FOUND")
-                logger.error(f"[{self.node_id}] TX_ID: {transaction_id} Cannot Commit. State: {current_state}")
-                # If already committed (e.g. retry), ACK success. Otherwise, it's an error.
-                if current_state == "COMMITTED":
-                    return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_SUCCESS, message="Transaction already committed")
-                return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_FAILURE, message=f"Transaction not in PREPARED state (state: {current_state})")
+            with self.transactions_lock:
+                if transaction_id not in self.active_2pc_transactions or self.active_2pc_transactions[transaction_id]["state"] != "PREPARED":
+                    current_state = self.active_2pc_transactions.get(transaction_id, {}).get("state", "NOT_FOUND")
+                    logger.error(f"[{self.node_id}] TX_ID: {transaction_id} Cannot Commit. State: {current_state}")
+                    if current_state == "COMMITTED":
+                        span.set_attribute("transaction.state", "COMMITTED")
+                        return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_SUCCESS, message="Transaction already committed")
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, description=f"Transaction not in PREPARED state (state: {current_state})"))
+                    return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_FAILURE, message=f"Transaction not in PREPARED state (state: {current_state})")
 
-            staged_operations = self.active_2pc_transactions[transaction_id]["operations"]
-            
-            # Apply and replicate changes
-            # This part needs to be robust. If any sub-operation fails replication, the whole commit is problematic.
-            all_ops_replicated = True
-            applied_ops_details = [] # For potential rollback if a later op fails
-
-            for op in staged_operations:
-                book_id = op.book_id
-                quantity_change = op.quantity_change
+                staged_operations = self.active_2pc_transactions[transaction_id]["operations"]
                 
-                with self.key_locks[book_id]:
-                    current_quantity = self.datastore.get(book_id, 0) # Should exist due to Prepare check
-                    new_quantity = current_quantity + quantity_change # quantity_change is negative for decrement
-                    
-                    original_book_quantity_for_rollback = self.datastore[book_id]
-                    self.datastore[book_id] = new_quantity # Apply locally
-                    
-                    # Use a unique ID for this sub-operation's replication
-                    replication_op_id = f"{transaction_id}_{book_id}"
-                    logger.info(f"[{self.node_id}] TX_ID: {transaction_id} - Committing op for {book_id}: {current_quantity} -> {new_quantity}. Replicating (op_id: {replication_op_id})...")
-                    
-                    if not self._replicate_to_backups(book_id, new_quantity, replication_op_id):
-                        logger.error(f"[{self.node_id}] TX_ID: {transaction_id} - FAILED to replicate change for {book_id}. Rolling back this operation.")
-                        self.datastore[book_id] = original_book_quantity_for_rollback # Rollback this specific op
-                        all_ops_replicated = False
-                        # TODO: Need a strategy for partial commit failure. For now, fail the whole 2PC commit.
-                        # This might require rolling back previously successful ops in *this* transaction.
-                        # For simplicity, we stop and mark the 2PC commit as failed.
-                        break 
-                    else:
-                        applied_ops_details.append({"book_id": book_id, "old_qty": original_book_quantity_for_rollback, "new_qty": new_quantity})
-                        logger.info(f"[{self.node_id}] TX_ID: {transaction_id} - Successfully applied and replicated for {book_id}.")
+                all_ops_replicated = True
+                applied_ops_details = []
 
-            if all_ops_replicated:
-                self.active_2pc_transactions[transaction_id]["state"] = "COMMITTED"
-                logger.info(f"[{self.node_id}] TX_ID: {transaction_id} COMMITTED successfully.")
-                return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_SUCCESS, message="Transaction committed and replicated")
-            else:
-                # Attempt to rollback all applied operations in this transaction due to a replication failure
-                logger.error(f"[{self.node_id}] TX_ID: {transaction_id} - Commit FAILED due to replication issue. Attempting to rollback locally applied changes for this TX.")
-                for detail in reversed(applied_ops_details): # Rollback in reverse order
-                    with self.key_locks[detail["book_id"]]:
-                        self.datastore[detail["book_id"]] = detail["old_qty"]
-                        # Note: This local rollback doesn't undo successful replications of earlier ops in this TX.
-                        # This is a limitation of the current simplified rollback.
-                self.active_2pc_transactions[transaction_id]["state"] = "ABORTED" # Or a special "COMMIT_FAILED" state
-                return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_FAILURE, message="Commit failed due to replication failure of one or more operations")
+                for op in staged_operations:
+                    book_id = op.book_id
+                    quantity_change = op.quantity_change
+                    
+                    with self.key_locks[book_id]:
+                        current_quantity = self.datastore.get(book_id, 0)
+                        new_quantity = current_quantity + quantity_change
+                        
+                        original_book_quantity_for_rollback = self.datastore[book_id]
+                        self.datastore[book_id] = new_quantity
+                        
+                        replication_op_id = f"{transaction_id}_{book_id}"
+                        logger.info(f"[{self.node_id}] TX_ID: {transaction_id} - Committing op for {book_id}: {current_quantity} -> {new_quantity}. Replicating (op_id: {replication_op_id})...")
+                        
+                        if not self._replicate_to_backups(book_id, new_quantity, replication_op_id):
+                            logger.error(f"[{self.node_id}] TX_ID: {transaction_id} - FAILED to replicate change for {book_id}. Rolling back this operation.")
+                            self.datastore[book_id] = original_book_quantity_for_rollback
+                            all_ops_replicated = False
+                            break 
+                        else:
+                            applied_ops_details.append({"book_id": book_id, "old_qty": original_book_quantity_for_rollback, "new_qty": new_quantity})
+                            logger.info(f"[{self.node_id}] TX_ID: {transaction_id} - Successfully applied and replicated for {book_id}.")
+                            books_in_stock_updowncounter.add(quantity_change, {"book_id": book_id, "node_id": self.node_id})
+
+
+                if all_ops_replicated:
+                    self.active_2pc_transactions[transaction_id]["state"] = "COMMITTED"
+                    logger.info(f"[{self.node_id}] TX_ID: {transaction_id} COMMITTED successfully.")
+                    span.set_attribute("transaction.state", "COMMITTED")
+                    return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_SUCCESS, message="Transaction committed and replicated")
+                else:
+                    logger.error(f"[{self.node_id}] TX_ID: {transaction_id} - Commit FAILED due to replication issue. Attempting to rollback locally applied changes for this TX.")
+                    for detail in reversed(applied_ops_details):
+                        with self.key_locks[detail["book_id"]]:
+                            self.datastore[detail["book_id"]] = detail["old_qty"]
+                    self.active_2pc_transactions[transaction_id]["state"] = "ABORTED"
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, description="Commit failed due to replication failure"))
+                    return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_FAILURE, message="Commit failed due to replication failure of one or more operations")
 
     def AbortTransaction(self, request, context):
-        transaction_id = request.transaction_id
-        logger.info(f"[{self.node_id}] AbortTransaction received for TX_ID: {transaction_id}")
+        with tracer.start_as_current_span("AbortTransaction") as span:
+            transaction_id = request.transaction_id
+            span.set_attribute("transaction.id", transaction_id)
+            logger.info(f"[{self.node_id}] AbortTransaction received for TX_ID: {transaction_id}")
 
-        if not self._is_leader():
-            # Non-leader acknowledging abort is fine, as the transaction won't be processed by it anyway.
-            msg = "Not the leader, but acknowledging Abort."
-            logger.warning(f"[{self.node_id}] {msg} Role: {self.raft_node.state}")
-            # It's generally safe to ACK abort even if not leader or TX not found.
-            return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_SUCCESS, message=msg)
+            if not self._is_leader():
+                msg = "Not the leader, but acknowledging Abort."
+                logger.warning(f"[{self.node_id}] {msg} Role: {self.raft_node.state}")
+                return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_SUCCESS, message=msg)
 
-        with self.transactions_lock:
-            tx_info = self.active_2pc_transactions.get(transaction_id)
-            if not tx_info:
-                logger.warning(f"[{self.node_id}] TX_ID: {transaction_id} not found for Abort. Assuming already handled or never prepared.")
-                return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_SUCCESS, message="Transaction not found, abort acknowledged")
+            with self.transactions_lock:
+                tx_info = self.active_2pc_transactions.get(transaction_id)
+                if not tx_info:
+                    logger.warning(f"[{self.node_id}] TX_ID: {transaction_id} not found for Abort. Assuming already handled or never prepared.")
+                    return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_SUCCESS, message="Transaction not found, abort acknowledged")
 
-            if tx_info["state"] == "COMMITTED":
-                logger.error(f"[{self.node_id}] TX_ID: {transaction_id} CRITICAL: Received Abort for already COMMITTED transaction.")
-                return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_FAILURE, message="Transaction already committed, cannot abort")
-            
-            if tx_info["state"] == "ABORTED":
-                 logger.info(f"[{self.node_id}] TX_ID: {transaction_id} already ABORTED. Acknowledging abort again.")
-                 return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_SUCCESS, message="Transaction already aborted")
+                if tx_info["state"] == "COMMITTED":
+                    logger.error(f"[{self.node_id}] TX_ID: {transaction_id} CRITICAL: Received Abort for already COMMITTED transaction.")
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, description="Received Abort for already COMMITTED transaction"))
+                    return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_FAILURE, message="Transaction already committed, cannot abort")
+                
+                if tx_info["state"] == "ABORTED":
+                     logger.info(f"[{self.node_id}] TX_ID: {transaction_id} already ABORTED. Acknowledging abort again.")
+                     span.set_attribute("transaction.state", "ABORTED")
+                     return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_SUCCESS, message="Transaction already aborted")
 
-            tx_info["state"] = "ABORTED"
-            # No actual data changes were made during Prepare, so just update state.
-            logger.info(f"[{self.node_id}] TX_ID: {transaction_id} ABORTED.")
-            return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_SUCCESS, message="Transaction aborted successfully")
+                tx_info["state"] = "ABORTED"
+                logger.info(f"[{self.node_id}] TX_ID: {transaction_id} ABORTED.")
+                span.set_attribute("transaction.state", "ABORTED")
+                return books_database_pb2.DBAckTransactionResponse(transaction_id=transaction_id, status=books_database_pb2.DB_ACK_SUCCESS, message="Transaction aborted successfully")
 
 def serve():
     db_node_port = os.environ.get("DB_NODE_PORT", "50060") # Default port
